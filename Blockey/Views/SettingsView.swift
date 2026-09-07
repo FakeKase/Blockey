@@ -1,8 +1,15 @@
 import SwiftUI
+import SwiftData
 
 struct SettingsView: View {
     @Environment(CalendarService.self) private var calendars
+    @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+
+    @State private var exportDocument: BackupFile?
+    @State private var isExporting = false
+    @State private var isImporting = false
+    @State private var backupMessage: String?
 
     @AppStorage(SettingsKey.dayStartMinute) private var dayStartMinute = SettingsKey.defaultDayStart
     @AppStorage(SettingsKey.dayEndMinute) private var dayEndMinute = SettingsKey.defaultDayEnd
@@ -71,6 +78,28 @@ struct SettingsView: View {
                 } footer: {
                     Text("Blockey writes every block to this calendar, so your plan is visible on your other devices and survives reinstalling the app.")
                 }
+
+                Section {
+                    Button {
+                        exportBackup()
+                    } label: {
+                        Label("Export tasks & templates", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        isImporting = true
+                    } label: {
+                        Label("Restore from a backup", systemImage: "square.and.arrow.down")
+                    }
+                    if let backupMessage {
+                        Text(backupMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Backup")
+                } footer: {
+                    Text("Your blocks are already safe in Calendar. Tasks and templates live only on this phone — they survive reinstalling Blockey, but not deleting it.")
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -79,6 +108,44 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .fileExporter(isPresented: $isExporting,
+                          document: exportDocument,
+                          contentType: .json,
+                          defaultFilename: exportDocument?.backup.suggestedFilename) { result in
+                switch result {
+                case .success: backupMessage = "Backup saved."
+                case .failure(let error): backupMessage = error.localizedDescription
+                }
+            }
+            .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
+                importBackup(result)
+            }
+        }
+    }
+
+    private func exportBackup() {
+        do {
+            exportDocument = BackupFile(backup: try BlockeyBackup.capture(context: context))
+            isExporting = true
+        } catch {
+            backupMessage = "Could not read your tasks and templates to export."
+        }
+    }
+
+    private func importBackup(_ result: Result<URL, Error>) {
+        do {
+            let url = try result.get()
+            // A file returned by the picker lives outside the sandbox.
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let backup = try decoder.decode(BlockeyBackup.self, from: Data(contentsOf: url))
+            let restored = try backup.restore(into: context)
+            backupMessage = "Restored \(restored.tasks) task\(restored.tasks == 1 ? "" : "s") and \(restored.templates) template\(restored.templates == 1 ? "" : "s")."
+        } catch {
+            backupMessage = "That file isn’t a Blockey backup."
         }
     }
 
