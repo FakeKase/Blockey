@@ -267,3 +267,39 @@ Amends the plan's build order. Two changes, both earned above.
 4. **Templates** — model, editor, weekday assignment, stamping with the fixed-events-win rule.
 5. **Polish** — categories and colours (including the hash-from-slug reconstruction in
    Consequence 3), day window, alarm toggle, empty states, haptics; install on device.
+
+---
+
+## Addendum — 2026-09-07: the local round trip is verified
+
+This ADR left one question open, correctly refusing to assert it: whether a custom URL
+scheme survives being written to and read back from the calendar store. Half of it is now
+measured rather than assumed.
+
+**Test.** Stamp a template, then read the simulator's calendar database directly
+(`Calendar.sqlitedb`, `CalendarItem.url`) rather than through the app that wrote it:
+
+```
+Deep work               blockey://block/7F1B3100-…-C75308B5E484?c=deep
+Admin & email           blockey://block/434C0E9B-…-BCB578708099?c=admin
+Lunch                   blockey://block/CE3CAD7C-…-6B37CB0C52C0?c=rest
+Wrap up & plan tomorrow blockey://block/BE7831F5-…-E066E1491F8B?c=admin
+```
+
+**Result.** The token survives EventKit intact — custom scheme, host, UUID path *and*
+query parameter. Nothing is normalised, prefixed or dropped. Independently corroborated at
+the UI level: the category colours in the running app are reconstructed by parsing
+`event.url` on read, and they render correctly, so the value is not merely stored but
+usable on the way back.
+
+**What is still unverified.** The *iCloud CalDAV* round trip — whether the token survives a
+sync to Apple's servers and back, or an edit made in Calendar.app or on iCloud.com. Testing
+that requires a real iCloud account, and this project deliberately never touches the
+developer's own calendar; all EventKit work happens against the simulator. It remains
+open, and the fallbacks named above stand if it ever proves to be a problem.
+
+**Why this changes little.** The design already degrades gracefully: a block whose token is
+lost still appears, still moves, and still works — it falls back to a default colour and
+forgets which inbox task it came from. That property was the reason the token was allowed to
+be the only metadata channel, and it is what makes the remaining unknown survivable rather
+than load-bearing.
