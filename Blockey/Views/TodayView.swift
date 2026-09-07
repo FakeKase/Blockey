@@ -341,6 +341,10 @@ struct TodayView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
+            Button { addBlock() } label: { Image(systemName: "plus") }
+                .accessibilityLabel("New block")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Button { sheet = .templates } label: { Label("Templates", systemImage: "square.stack.3d.up") }
                 Button { sheet = .settings } label: { Label("Settings", systemImage: "gearshape") }
@@ -410,6 +414,29 @@ struct TodayView: View {
         context.insert(task)
         perform { try calendars.delete(block) }
         show("Returned to inbox")
+    }
+
+    /// Adds an ad-hoc block without going via the inbox, dropped into the next
+    /// free slot and opened straight for editing so the title can be typed.
+    private func addBlock() {
+        let length = TimeInterval(30 * 60)
+        let gaps = DaySchedule.gaps(busy: contents.busy, within: window, minimumDuration: length)
+        let fallback = DaySchedule.snap(isToday ? now : window.start,
+                                        toMinutes: snapMinutes,
+                                        calendar: calendar)
+        let start = DaySchedule.firstFit(duration: length,
+                                         in: gaps,
+                                         notBefore: isToday ? now : nil)?.start ?? fallback
+        do {
+            let block = try calendars.createBlock(title: "New block",
+                                                  range: TimeRange(start: start, duration: length),
+                                                  category: .deepWork,
+                                                  alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
+            reload()
+            selectedBlock = block
+        } catch {
+            show(error.localizedDescription, warning: true)
+        }
     }
 
     /// Places as many inbox tasks as will fit, in priority order, without
