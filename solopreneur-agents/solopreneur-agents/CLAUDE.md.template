@@ -1,0 +1,54 @@
+# <PROJECT NAME>
+
+> Rename this file to `CLAUDE.md` and put it in your project root.
+> Every subagent loads it automatically (except the built-in Explore and Plan agents),
+> so this is where shared context lives. Keep it short — it costs tokens on every delegation.
+
+## What this is
+
+One or two sentences. What the product does and who it's for.
+
+## Stack
+
+- **Frontend:**
+- **Backend:**
+- **Database:**
+- **Hosting:**
+- **Package manager:**
+
+## Commands
+
+```bash
+# install
+# dev
+# test
+# typecheck / lint
+# build
+# deploy
+```
+
+## Layout
+
+```
+src/
+  ...
+```
+
+Anything non-obvious about where things live goes here.
+
+## Conventions
+
+- Naming:
+- Imports:
+- Error handling:
+- Tests live in:
+
+## Rules
+
+- Never commit `.env`
+- Never run migrations against production without explicit confirmation
+- <your own non-negotiables>
+
+## Current focus
+
+What's being worked on right now. Update this; it's the highest-value line in the file.

@@ -1,0 +1,16 @@
+{
+  "_comment": "Rename to settings.json. Every field here is optional — delete what you don't want.",
+
+  "_agent_comment": "Uncomment to make every session in this project run as one agent by default.",
+  "_agent": "frontend-engineer",
+
+  "_env_comment": "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: 1 turns off nesting, default is 3. CLAUDE_CODE_SUBAGENT_MODEL forces every subagent onto one model — useful as a cost ceiling.",
+  "env": {
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "2"
+  },
+
+  "_permissions_comment": "Agent(name) blocks a subagent entirely. Handy for trimming the roster without deleting files.",
+  "permissions": {
+    "deny": []
+  }
+}
