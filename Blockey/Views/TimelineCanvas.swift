@@ -82,6 +82,7 @@ struct TimelineCanvas: View {
             }
             .onAppear { scrollToNow(proxy, animated: false) }
             .onChange(of: visible) { _, _ in scrollToNow(proxy, animated: true) }
+            .sensoryFeedback(.impact(weight: .light), trigger: drag?.id)
         }
     }
 
@@ -173,14 +174,24 @@ struct TimelineCanvas: View {
                 .frame(width: width - 8, height: max(minimumBlockHeight, height(for: gap)))
                 .offset(x: gutterWidth + 4, y: y(for: gap.start))
                 .contentShape(Rectangle())
+                .accessibilityElement()
+                .accessibilityLabel("Free slot")
+                .accessibilityValue(Text(gap.start, format: .dateTime.hour().minute()))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    onPlace(DaySchedule.snap(gap.start, toMinutes: snapMinutes, calendar: calendar))
+                }
                 .gesture(
                     SpatialTapGesture().onEnded { value in
-                        // Place where the user tapped, pulled back so the block
-                        // still ends inside the gap.
+                        // Snap first, then clamp — never the other way round.
+                        // Clamping last is what guarantees the block stays
+                        // inside the gap: a gap starting at 10:50 would
+                        // otherwise snap back to 10:45 and overlap the meeting
+                        // that just ended.
                         let tapped = date(atY: y(for: gap.start) + value.location.y)
+                        let snapped = DaySchedule.snap(tapped, toMinutes: snapMinutes, calendar: calendar)
                         let latestStart = gap.end.addingTimeInterval(-duration)
-                        let clamped = min(max(tapped, gap.start), max(gap.start, latestStart))
-                        onPlace(DaySchedule.snap(clamped, toMinutes: snapMinutes, calendar: calendar))
+                        onPlace(min(max(snapped, gap.start), max(gap.start, latestStart)))
                     }
                 )
         }
@@ -201,7 +212,6 @@ struct TimelineCanvas: View {
                     FixedEventChip(block: item)
                         .frame(width: slot.width, height: max(minimumBlockHeight, height(for: item.range)))
                         .offset(x: gutterWidth + slot.x, y: y(for: item.range.start))
-                        .allowsHitTesting(false)
                 } else {
                     blockView(item, slot: slot)
                 }
@@ -217,11 +227,15 @@ struct TimelineCanvas: View {
 
         return BlockChip(block: block, isDragging: isDragging)
             .frame(width: slot.width, height: chipHeight)
-            .overlay(alignment: .bottom) { resizeGrabber(for: block) }
+            .overlay(alignment: .bottom) {
+                if block.isEditable { resizeGrabber(for: block) }
+            }
             .offset(x: gutterWidth + slot.x, y: y(for: block.range.start) + moveOffset)
             .zIndex(isDragging ? 10 : 1)
             .onTapGesture { onSelectBlock(block) }
-            .gesture(moveGesture(for: block))
+            // A repeating or all-day event shares one identifier across every
+            // occurrence, so dragging this one would rewrite a different one.
+            .gesture(moveGesture(for: block), isEnabled: block.isEditable)
     }
 
     private func columnFrame(placed: TimelineLayout.Placed<Block>, width: CGFloat) -> (x: CGFloat, width: CGFloat) {
@@ -251,19 +265,34 @@ struct TimelineCanvas: View {
 
     // MARK: Gestures
 
+    /// Long-press to pick a block up, then drag.
+    ///
+    /// A plain drag gesture here would fight the enclosing ScrollView: blocks
+    /// can cover most of the day, so any scroll that happens to start on one
+    /// would move the block instead of scrolling. Requiring a press first is
+    /// what Calendar does, and it makes the two gestures unambiguous.
     private func moveGesture(for block: Block) -> some Gesture {
-        DragGesture(minimumDistance: 10)
+        LongPressGesture(minimumDuration: 0.28)
+            .sequenced(before: DragGesture(minimumDistance: 0))
             .onChanged { value in
-                drag = DragState(id: block.id, mode: .move, offset: value.translation.height)
+                if case .second(true, let move?) = value {
+                    drag = DragState(id: block.id, mode: .move, offset: move.translation.height)
+                }
             }
             .onEnded { value in
                 defer { drag = nil }
-                let shift = TimeInterval(value.translation.height / hourHeight * 3600)
+                guard case .second(true, let move?) = value else { return }
+                let shift = TimeInterval(move.translation.height / hourHeight * 3600)
                 let moved = DaySchedule.snap(block.range.start.addingTimeInterval(shift),
                                              toMinutes: snapMinutes,
                                              calendar: calendar)
-                guard moved != block.range.start else { return }
-                onMove(block, TimeRange(start: moved, duration: block.range.duration))
+                // Unclamped, a hard drag upward pushes the block into
+                // yesterday: it saves successfully and then vanishes, because
+                // the timeline only ever fetches the selected day.
+                let latest = visible.end.addingTimeInterval(-block.range.duration)
+                let bounded = min(max(moved, visible.start), max(visible.start, latest))
+                guard bounded != block.range.start else { return }
+                onMove(block, TimeRange(start: bounded, duration: block.range.duration))
             }
     }
 
@@ -287,7 +316,8 @@ struct TimelineCanvas: View {
                         let rawEnd = block.range.end.addingTimeInterval(change)
                         let snapped = DaySchedule.snap(rawEnd, toMinutes: snapMinutes, calendar: calendar)
                         // Never let a block collapse to nothing.
-                        let end = max(snapped, block.range.start.addingTimeInterval(TimeInterval(snapMinutes * 60)))
+                        let floor = block.range.start.addingTimeInterval(TimeInterval(snapMinutes * 60))
+                        let end = min(max(snapped, floor), max(floor, visible.end))
                         guard end != block.range.end else { return }
                         onMove(block, TimeRange(start: block.range.start, end: end))
                     }
@@ -301,12 +331,21 @@ private struct BlockChip: View {
     let block: Block
     var isDragging: Bool
 
+    @Environment(\.colorScheme) private var scheme
+
     var body: some View {
         let tint = block.category.tint
-        HStack(alignment: .top, spacing: 6) {
+        // Six categories cannot be told apart by hue alone — under deuteranopia
+        // the closest pair stays below the threshold of noticing however the
+        // palette is tuned. The symbol is what actually distinguishes them.
+        HStack(alignment: .top, spacing: 5) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(tint)
                 .frame(width: 3)
+            Image(systemName: block.category.symbolName)
+                .font(.caption2)
+                .foregroundStyle(tint)
+                .padding(.top, 1)
             VStack(alignment: .leading, spacing: 1) {
                 Text(block.title)
                     .font(.footnote.weight(.semibold))
@@ -321,16 +360,21 @@ private struct BlockChip: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        .background(tint.opacity(scheme == .dark ? 0.30 : 0.17), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(tint.opacity(scheme == .dark ? 0.7 : 0.45), lineWidth: 1))
         .shadow(color: .black.opacity(isDragging ? 0.18 : 0), radius: isDragging ? 8 : 0, y: isDragging ? 4 : 0)
         .scaleEffect(isDragging ? 1.02 : 1)
         .animation(.snappy(duration: 0.18), value: isDragging)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(block.title), \(block.category.title)")
+        .accessibilityValue(Text(block.range.start, format: .dateTime.hour().minute()))
     }
 }
 
 private struct FixedEventChip: View {
     let block: Block
+
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -352,13 +396,21 @@ private struct FixedEventChip: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Kept quieter than a block in both schemes. In dark mode a plain
+        // white overlay would make meetings the brightest thing on screen,
+        // inverting the hierarchy: the day you planned should out-read the
+        // day that was booked for you.
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.05))
+                .fill(Color.primary.opacity(scheme == .dark ? 0.06 : 0.05))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.primary.opacity(0.13), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                .strokeBorder(Color.primary.opacity(scheme == .dark ? 0.18 : 0.13),
+                              style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(block.title), meeting, not movable")
+        .accessibilityValue(Text(block.range.start, format: .dateTime.hour().minute()))
     }
 }

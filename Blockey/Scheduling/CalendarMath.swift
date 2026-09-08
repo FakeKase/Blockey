@@ -11,9 +11,14 @@ extension Calendar {
     }
 
     /// The top of the next hour, or `date` itself when already exact.
+    ///
+    /// Steps forward rather than adding a single hour: inside the repeated hour
+    /// of a fall-back day, `flooredToHour` resolves to the *first* occurrence,
+    /// so one addition can still land before the input.
     func ceiledToHour(_ date: Date) -> Date {
-        let floored = flooredToHour(date)
-        return floored == date ? date : floored.addingTimeInterval(3600)
+        var candidate = flooredToHour(date)
+        while candidate < date { candidate = candidate.addingTimeInterval(3600) }
+        return candidate
     }
 
     func isSameDay(_ a: Date, _ b: Date) -> Bool {

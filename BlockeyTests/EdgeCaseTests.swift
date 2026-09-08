@@ -82,28 +82,25 @@ struct DaylightSavingTests {
         #expect(hourMinute(w.end) == (22, 0))
     }
 
-    @Test("DEFECT: window is an hour late on a spring-forward day")
-    func windowDriftsOnSpringForward() {
+    @Test("The window holds its wall-clock hours on a spring-forward day")
+    func windowHoldsOnSpringForward() {
+        // 8 March is only 23 hours long. Adding startMinute * 60 seconds to
+        // midnight used to land the window at 08:00–23:00.
         let w = DaySchedule.window(for: springForward, startMinute: 7 * 60, endMinute: 22 * 60, calendar: ny)
-        // `window` adds startMinute * 60 *seconds* to midnight, and 8 March is
-        // only 23 hours long, so a 07:00–22:00 planning window becomes
-        // 08:00–23:00. Correct behaviour is (7, 0) / (22, 0); when this test
-        // starts failing, the bug has been fixed — change it to expect that.
-        #expect(hourMinute(w.start) == (8, 0))
-        #expect(hourMinute(w.end) == (23, 0))
+        #expect(hourMinute(w.start) == (7, 0))
+        #expect(hourMinute(w.end) == (22, 0))
     }
 
-    @Test("DEFECT: window is an hour early on a fall-back day")
-    func windowDriftsOnFallBack() {
+    @Test("The window holds its wall-clock hours on a fall-back day")
+    func windowHoldsOnFallBack() {
+        // 1 November is 25 hours long, so the old arithmetic landed an hour early.
         let w = DaySchedule.window(for: fallBack, startMinute: 7 * 60, endMinute: 22 * 60, calendar: ny)
-        // 1 November is 25 hours long, so the same arithmetic lands an hour
-        // early. Correct behaviour is (7, 0) / (22, 0).
-        #expect(hourMinute(w.start) == (6, 0))
-        #expect(hourMinute(w.end) == (21, 0))
+        #expect(hourMinute(w.start) == (7, 0))
+        #expect(hourMinute(w.end) == (22, 0))
     }
 
-    @Test("DEFECT: a stamped template is shifted a whole hour on a DST day")
-    func stampingDriftsOnADSTDay() throws {
+    @Test("A stamped template lands on its requested hour on a DST day")
+    func stampingHoldsOnADSTDay() throws {
         // Exactly the composition TodayView uses: window(for:) feeding stamp().
         let window = DaySchedule.window(for: springForward,
                                         startMinute: 7 * 60,
@@ -117,10 +114,10 @@ struct DaylightSavingTests {
             calendar: ny)
 
         let range = try #require(result.placements.first?.outcome.range)
-        // The template says 09:00. It is reported as "placed at the intended
-        // time" — while actually being written to the calendar at 10:00.
+        // The template says 09:00, and it used to be written at 10:00 while
+        // still reporting itself as placed at the intended time.
         #expect(result.placements[0].outcome == .placedAtIntendedTime(range))
-        #expect(hourMinute(range.start) == (10, 0))
+        #expect(hourMinute(range.start) == (9, 0))
     }
 
     @Test("Stamping lands on the requested hour on an ordinary day in the same zone")
@@ -170,18 +167,15 @@ struct CalendarMathTests {
         #expect(ny.ceiledToHour(wall(plainDay, 9, 1)) == wall(plainDay, 10))
     }
 
-    @Test("DEFECT: ceiledToHour returns an earlier time inside a repeated hour")
-    func ceiledGoesBackwardsOnFallBack() {
-        // 01:30 EST, i.e. the *second* 01:30 on 1 November.
+    @Test("ceiledToHour never returns a time before its argument, even in a repeated hour")
+    func ceilingHoldsInsideTheRepeatedHour() {
+        // 01:30 EST — the *second* 01:30 on 1 November. `flooredToHour` rebuilds
+        // from (y, m, d, hour) and resolves the ambiguous 01:00 to the first
+        // occurrence, so a single +3600 used to land before the input.
         let secondOneThirty = fallBack.addingTimeInterval(2.5 * 3600)
         let ceiled = ny.ceiledToHour(secondOneThirty)
-        // `flooredToHour` rebuilds the date from (y, m, d, hour), and
-        // `Calendar.date(from:)` resolves the ambiguous 01:00 to the *first*
-        // occurrence — an hour earlier than it should be. Adding 3600 then
-        // lands on the second 01:00, which is *before* the input.
-        // A ceiling must never be smaller than its argument.
-        #expect(ceiled < secondOneThirty)
-        #expect(ceiled == fallBack.addingTimeInterval(2 * 3600))
+        #expect(ceiled >= secondOneThirty)
+        #expect(ceiled == fallBack.addingTimeInterval(3 * 3600))
     }
 }
 
@@ -270,16 +264,17 @@ struct BlockTokenTests {
         #expect(BlockToken(url: nil) == nil)
     }
 
-    @Test("DEFECT: a case-shifted scheme or host is rejected")
-    func caseShiftedURLsAreRejected() throws {
-        // URI schemes and hosts are case-insensitive (RFC 3986), and ADR 002
-        // explicitly records the CalDAV round trip as unverified. If iCloud or
-        // Calendar.app ever normalises case, or the user retypes the URL by
-        // hand, `BlockToken.init(url:)` drops the token and the block silently
-        // loses its colour and its task link.
-        // Fix: compare `url.scheme?.lowercased()` and `url.host?.lowercased()`.
-        #expect(BlockToken(url: URL(string: "BLOCKEY://block/\(id.uuidString)?c=deep")) == nil)
-        #expect(BlockToken(url: URL(string: "blockey://BLOCK/\(id.uuidString)?c=deep")) == nil)
+    @Test("A case-shifted scheme or host still parses")
+    func caseShiftedURLsAreAccepted() throws {
+        // URI schemes and hosts are case-insensitive (RFC 3986). ADR 002 records
+        // the CalDAV round trip as unverified, so if iCloud or Calendar.app ever
+        // normalises case the token must still survive.
+        let upperScheme = try #require(BlockToken(url: URL(string: "BLOCKEY://block/\(id.uuidString)?c=deep")))
+        #expect(upperScheme.id == id)
+        #expect(upperScheme.category == .deepWork)
+
+        let upperHost = try #require(BlockToken(url: URL(string: "blockey://BLOCK/\(id.uuidString)?c=deep")))
+        #expect(upperHost.id == id)
     }
 }
 
@@ -612,38 +607,44 @@ struct TemplateStamperEdgeTests {
         }
     }
 
-    @Test("DEFECT: a long late row lets another row spill onto the next day")
-    func windowWideningCanPlaceOnTheFollowingDay() throws {
-        // "Wind down" at 23:00 for 8 hours widens the effective window to 07:00
-        // the *following* morning — the stamper only ever widens, never clips to
-        // the day being stamped. An overnight fixed event then leaves the only
-        // fitting gap after midnight, and "Focus" is silently scheduled there.
-        // TodayView writes it to the calendar but only ever fetches `selectedDate`,
-        // so the block is invisible in the app that created it.
-        // Fix: clamp `effective` to the calendar day of `date`, or reject any
-        // candidate range not contained in that day.
-        let overnight = TimeRange(start: at(7, 0), end: at(7, 0).addingTimeInterval(18 * 3600)) // 07:00 → 01:00
+    @Test("A row can never be scheduled onto the following day")
+    func stampingStaysInsideTheDay() throws {
+        // "Wind down" at 23:00 for 8 hours used to widen the effective window to
+        // 07:00 the *following* morning, because the stamper only ever widened
+        // and never clipped back to the day being stamped. With an overnight
+        // fixed event, "Focus" was then silently scheduled after midnight —
+        // written to the calendar, but invisible in the app, which only ever
+        // fetches the selected day.
+        let overnight = TimeRange(start: at(7, 0), end: at(7, 0).addingTimeInterval(18 * 3600)) // 07:00 -> 01:00
         let result = stamp([item("Focus", at: 9 * 60, minutes: 60),
                             item("Wind down", at: 23 * 60, minutes: 480)],
                            busy: [overnight])
 
-        let focus = try #require(result.placements.first { $0.item.title == "Focus" }?.outcome.range)
-        #expect(!utc.isDate(focus.start, inSameDayAs: plainDay),
-                "Focus was expected to land on the following day; if it no longer does, the bug is fixed")
-        #expect(focus == TimeRange(start: at(0, 0).addingTimeInterval(25 * 3600), duration: 3600)) // next day 01:00
+        // Nothing may land outside the stamped day; a row with nowhere to go
+        // belongs in the inbox, which the caller can actually show you.
+        for placement in result.placements {
+            if let range = placement.outcome.range {
+                #expect(utc.isDate(range.start, inSameDayAs: plainDay))
+                #expect(range.end <= at(0, 0).addingTimeInterval(24 * 3600))
+            }
+        }
+        #expect(result.unplaced.contains { $0.title == "Focus" })
     }
 
-    @Test("Widening for an early row does not drag later rows out of the window")
-    func earlyRowDoesNotUnlockTheWholeMorning() throws {
-        // A 06:00 workout widens the window down to 06:00. A later row that
-        // cannot fit must not quietly claim 06:45–07:00 of pre-window time
-        // unless it genuinely needs it — this pins the current behaviour so a
-        // change to the widening rule is visible.
+    @Test("An early row widens the window for every other row, not just itself")
+    func earlyRowUnlocksPreWindowTimeForOtherRows() throws {
+        // A 06:00 workout widens the effective window down to 06:00. The 09:00
+        // row then has nowhere to go inside 07:00–22:00, and lands in the
+        // pre-window sliver the workout opened up — outside the hours the user
+        // asked Blockey to plan within. Pinned so a change to the widening rule
+        // is visible; arguably the widening should apply only to the row that
+        // asked for it.
         let result = stamp([item("Workout", at: 6 * 60, minutes: 45),
-                            item("Focus", at: 9 * 60, minutes: 30)],
+                            item("Focus", at: 9 * 60, minutes: 15)],
                            busy: [span(7, 0, 22, 0)])
         let focus = try #require(result.placements.first { $0.item.title == "Focus" }?.outcome.range)
-        #expect(focus == span(6, 45, 7, 15))
+        #expect(focus == span(6, 45, 7, 0))
+        #expect(!workday.contains(focus))
     }
 
     @Test("An item at the very end of the window is placed, not dropped")

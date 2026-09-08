@@ -92,13 +92,34 @@ enum DaySchedule {
         return anchor.addingTimeInterval((offset / step).rounded(rounding) * step)
     }
 
+    /// A wall-clock time on a given day.
+    ///
+    /// `startOfDay + minutes * 60` is wrong on the two days a year that are not
+    /// 24 hours long. On a spring-forward day it lands an hour late, on a
+    /// fall-back day an hour early — which would shift the planning window and
+    /// every block a template stamps, while still reporting them as placed at
+    /// their intended time.
+    static func timeOfDay(_ minuteOfDay: Int,
+                          on date: Date,
+                          calendar: Calendar = .current) -> Date {
+        let midnight = calendar.startOfDay(for: date)
+        let hour = minuteOfDay / 60
+        let minute = minuteOfDay % 60
+        if (0..<24).contains(hour),
+           let exact = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: midnight) {
+            return exact
+        }
+        // A minute-of-day at or past 24:00 has no wall-clock equivalent that
+        // day; fall back to elapsed time from midnight.
+        return midnight.addingTimeInterval(TimeInterval(minuteOfDay * 60))
+    }
+
     /// The planning window for `date`, expressed as minutes from midnight.
     static func window(for date: Date,
                        startMinute: Int,
                        endMinute: Int,
                        calendar: Calendar = .current) -> TimeRange {
-        let midnight = calendar.startOfDay(for: date)
-        return TimeRange(start: midnight.addingTimeInterval(TimeInterval(startMinute * 60)),
-                         end: midnight.addingTimeInterval(TimeInterval(endMinute * 60)))
+        TimeRange(start: timeOfDay(startMinute, on: date, calendar: calendar),
+                  end: timeOfDay(endMinute, on: date, calendar: calendar))
     }
 }

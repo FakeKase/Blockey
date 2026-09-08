@@ -36,9 +36,13 @@ struct BlockToken: Equatable, Sendable {
     /// Parses a token, returning nil for anything that is not ours — including
     /// a URL the user typed into the event by hand.
     init?(url: URL?) {
+        // Scheme and host are case-insensitive per RFC 3986, and a round trip
+        // through another calendar client may normalise their case. Comparing
+        // them literally would throw the token away and lose the block's
+        // colour and task link.
         guard let url,
-              url.scheme == Self.scheme,
-              url.host == Self.host,
+              url.scheme?.lowercased() == Self.scheme,
+              url.host?.lowercased() == Self.host,
               let id = UUID(uuidString: url.lastPathComponent)
         else { return nil }
 

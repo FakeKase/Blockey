@@ -11,8 +11,11 @@ struct Block: Identifiable, Equatable, Sendable {
 
     /// What kind of commitment this is.
     enum Kind: Equatable, Sendable {
-        /// A Blockey block: movable, resizable, ours.
-        case block(BlockToken)
+        /// A Blockey block: movable, resizable, ours. The token is `nil` when
+        /// the event lives in our calendar but carries no readable token —
+        /// deliberately not a freshly minted one, which would change the
+        /// block's identity on every fetch.
+        case block(BlockToken?)
         /// A real event from another calendar. Planned around, never moved.
         case fixed
     }
@@ -23,6 +26,15 @@ struct Block: Identifiable, Equatable, Sendable {
     var kind: Kind
     var isAllDay: Bool
     var calendarTitle: String
+
+    /// Whether Blockey may safely rewrite this event.
+    ///
+    /// Recurring events are excluded because all occurrences share one
+    /// `eventIdentifier` and `event(withIdentifier:)` returns the *first* of
+    /// them — so dragging today's occurrence would silently rewrite one weeks
+    /// in the past. All-day and multi-day events are excluded because they have
+    /// no meaningful position on a single day's timeline.
+    var isEditable: Bool
 
     /// EventKit's identifier for the underlying event.
     ///
@@ -49,10 +61,16 @@ struct Block: Identifiable, Equatable, Sendable {
         // A token on an event outside our calendar is ignored: if the user drags
         // a block into another calendar it becomes a fixed commitment, which is
         // the honest reading of that gesture.
-        self.kind = (isOurs && token != nil) ? .block(token!) : (isOurs ? .block(BlockToken()) : .fixed)
+        self.kind = isOurs ? .block(token) : .fixed
         self.isAllDay = event.isAllDay
         self.calendarTitle = event.calendar?.title ?? ""
         self.eventIdentifier = event.eventIdentifier
+
+        let spansWholeDay = event.endDate.timeIntervalSince(event.startDate) >= 86_400
+        self.isEditable = isOurs
+            && !event.hasRecurrenceRules
+            && !event.isAllDay
+            && !spansWholeDay
     }
 
     /// Memberwise init for tests and previews.
@@ -62,7 +80,8 @@ struct Block: Identifiable, Equatable, Sendable {
          kind: Kind,
          isAllDay: Bool = false,
          calendarTitle: String = "",
-         eventIdentifier: String? = nil) {
+         eventIdentifier: String? = nil,
+         isEditable: Bool? = nil) {
         self.id = id
         self.title = title
         self.range = range
@@ -70,6 +89,7 @@ struct Block: Identifiable, Equatable, Sendable {
         self.isAllDay = isAllDay
         self.calendarTitle = calendarTitle
         self.eventIdentifier = eventIdentifier
+        self.isEditable = isEditable ?? (kind != .fixed)
     }
 }
 

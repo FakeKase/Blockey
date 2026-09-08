@@ -98,20 +98,28 @@ enum TemplateStamper {
                       window: TimeRange,
                       calendar: Calendar = .current) -> Result {
         let midnight = calendar.startOfDay(for: date)
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: midnight)
+            ?? midnight.addingTimeInterval(86_400)
         let valid = items.filter { $0.durationMinutes > 0 }
 
         func intendedRange(_ item: Item) -> TimeRange {
-            TimeRange(start: midnight.addingTimeInterval(TimeInterval(item.startMinuteOfDay * 60)),
+            TimeRange(start: DaySchedule.timeOfDay(item.startMinuteOfDay, on: date, calendar: calendar),
                       duration: item.duration)
         }
 
-        // Widen the window so the template's own intentions are always reachable.
+        // Widen the window so the template's own intentions are always
+        // reachable, then clamp back to the day being stamped. Without the
+        // clamp a long late row stretches the window past midnight and a
+        // later row can land on tomorrow — written to the calendar, but
+        // invisible in the app, which only ever fetches the selected day.
         var effective = window
         for item in valid {
             let intended = intendedRange(item)
             effective = TimeRange(start: Swift.min(effective.start, intended.start),
                                   end: Swift.max(effective.end, intended.end))
         }
+        effective = TimeRange(start: Swift.max(effective.start, midnight),
+                              end: Swift.min(effective.end, dayEnd))
 
         var occupied = busy
         var placements: [Placement] = []

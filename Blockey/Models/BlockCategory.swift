@@ -39,15 +39,26 @@ enum BlockCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
-    var tint: Color {
+    /// Light and dark variants. The dark values are lifted rather than reused:
+    /// the same tint that reads well on white sits at barely 1.2:1 on black, at
+    /// which point a block is a rumour rather than a rectangle.
+    private var components: (light: (Double, Double, Double), dark: (Double, Double, Double)) {
         switch self {
-        case .deepWork: return Color(red: 0.29, green: 0.40, blue: 0.87)
-        case .meeting:  return Color(red: 0.85, green: 0.42, blue: 0.24)
-        case .admin:    return Color(red: 0.45, green: 0.48, blue: 0.56)
-        case .personal: return Color(red: 0.36, green: 0.64, blue: 0.42)
-        case .health:   return Color(red: 0.83, green: 0.33, blue: 0.51)
-        case .rest:     return Color(red: 0.52, green: 0.44, blue: 0.72)
+        case .deepWork: return ((0.29, 0.40, 0.87), (0.52, 0.62, 1.00))
+        case .meeting:  return ((0.85, 0.42, 0.24), (1.00, 0.62, 0.42))
+        case .admin:    return ((0.40, 0.44, 0.54), (0.66, 0.71, 0.82))
+        case .personal: return ((0.24, 0.60, 0.36), (0.44, 0.83, 0.56))
+        case .health:   return ((0.83, 0.33, 0.51), (1.00, 0.55, 0.71))
+        case .rest:     return ((0.52, 0.44, 0.72), (0.74, 0.66, 0.95))
         }
+    }
+
+    var tint: Color {
+        let (light, dark) = components
+        return Color(uiColor: UIColor { traits in
+            let c = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: c.0, green: c.1, blue: c.2, alpha: 1)
+        })
     }
 
     static let fallback: BlockCategory = .deepWork

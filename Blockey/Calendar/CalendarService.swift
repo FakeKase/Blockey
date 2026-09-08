@@ -22,6 +22,7 @@ final class CalendarService {
         case noCalendarAvailable
         case eventNotFound
         case notPermitted
+        case notEditable
 
         var errorDescription: String? {
             switch self {
@@ -31,6 +32,8 @@ final class CalendarService {
                 return "That block no longer exists — it may have been deleted in Calendar."
             case .notPermitted:
                 return "Blockey needs full access to your calendar to plan your day."
+            case .notEditable:
+                return "This block repeats or lasts all day, so it can only be changed in Calendar."
             }
         }
     }
@@ -98,32 +101,35 @@ final class CalendarService {
     func ensureBlockeyCalendar() throws -> EKCalendar {
         if let existing = blockeyCalendar() { return existing }
 
-        guard let source = preferredSource() else { throw Failure.noCalendarAvailable }
+        // Try each candidate rather than trusting the first: an iCloud account
+        // can exist with Calendars switched off, and saving to it fails. Giving
+        // up there would mean no block could ever be written even though a
+        // perfectly good local source is sitting right behind it.
+        for source in candidateSources() {
+            let calendar = EKCalendar(for: .event, eventStore: store)
+            calendar.title = Self.calendarTitle
+            calendar.source = source
+            calendar.cgColor = CGColor(red: 0.29, green: 0.40, blue: 0.87, alpha: 1)
 
-        let calendar = EKCalendar(for: .event, eventStore: store)
-        calendar.title = Self.calendarTitle
-        calendar.source = source
-        calendar.cgColor = CGColor(red: 0.29, green: 0.40, blue: 0.87, alpha: 1)
-
-        do {
-            try store.saveCalendar(calendar, commit: true)
-        } catch {
-            throw Failure.noCalendarAvailable
+            if (try? store.saveCalendar(calendar, commit: true)) != nil {
+                rememberedCalendarID = calendar.calendarIdentifier
+                return calendar
+            }
         }
-        rememberedCalendarID = calendar.calendarIdentifier
-        return calendar
+        throw Failure.noCalendarAvailable
     }
 
     func blockeyCalendar() -> EKCalendar? {
-        if let id = rememberedCalendarID,
-           let calendar = store.calendar(withIdentifier: id),
-           calendar.title == Self.calendarTitle {
+        // Trust the identifier even if the title changed: renaming the calendar
+        // in Calendar.app is a normal thing to do, and rejecting it here would
+        // orphan every existing block (they would reclassify as immovable
+        // fixed events) and quietly create a second "Blockey" calendar.
+        if let id = rememberedCalendarID, let calendar = store.calendar(withIdentifier: id) {
             return calendar
         }
-        // The remembered id can go stale — the user may delete the calendar, or
-        // it may be re-created by a sync with a new identifier. Falling back to
-        // the title means Blockey re-adopts its own calendar instead of making
-        // a second one.
+        // The remembered id can still go stale — the user may delete the
+        // calendar, or a sync may re-create it under a new identifier. The
+        // title is a discovery fallback only.
         if let found = store.calendars(for: .event).first(where: { $0.title == Self.calendarTitle }) {
             rememberedCalendarID = found.calendarIdentifier
             return found
@@ -133,19 +139,25 @@ final class CalendarService {
 
     var blockeyCalendarID: String? { blockeyCalendar()?.calendarIdentifier }
 
-    /// Prefer iCloud so blocks reach the user's other devices; fall back to a
-    /// local calendar, which still survives an app reinstall because the
+    /// Sources that could host the Blockey calendar, best first.
+    ///
+    /// iCloud leads so blocks reach the user's other devices; a local calendar
+    /// is a fine fallback and still survives an app reinstall, because the
     /// calendar database lives outside the app sandbox.
-    private func preferredSource() -> EKSource? {
-        let sources = store.sources
-        if let icloud = sources.first(where: { $0.sourceType == .calDAV && $0.title.caseInsensitiveCompare("iCloud") == .orderedSame }) {
-            return icloud
+    private func candidateSources() -> [EKSource] {
+        let usable = store.sources.filter { $0.sourceType != .birthdays && $0.sourceType != .subscribed }
+        var ordered: [EKSource] = []
+
+        func add(_ source: EKSource?) {
+            guard let source, !ordered.contains(where: { $0.sourceIdentifier == source.sourceIdentifier }) else { return }
+            ordered.append(source)
         }
-        if let defaultSource = store.defaultCalendarForNewEvents?.source, defaultSource.sourceType != .birthdays {
-            return defaultSource
-        }
-        if let local = sources.first(where: { $0.sourceType == .local }) { return local }
-        return sources.first { $0.sourceType != .birthdays && $0.sourceType != .subscribed }
+
+        add(usable.first { $0.sourceType == .calDAV && $0.title.caseInsensitiveCompare("iCloud") == .orderedSame })
+        add(store.defaultCalendarForNewEvents?.source)
+        add(usable.first { $0.sourceType == .local })
+        usable.forEach(add)
+        return ordered
     }
 
     /// Calendars the user can choose to ignore when planning.
@@ -227,6 +239,7 @@ final class CalendarService {
                 range: TimeRange? = nil,
                 category: BlockCategory? = nil) throws {
         guard access.isGranted else { throw Failure.notPermitted }
+        guard block.isEditable else { throw Failure.notEditable }
         guard let event = event(for: block) else { throw Failure.eventNotFound }
 
         if let title { event.title = title }
@@ -246,28 +259,41 @@ final class CalendarService {
 
     func delete(_ block: Block) throws {
         guard access.isGranted else { throw Failure.notPermitted }
+        guard block.isEditable else { throw Failure.notEditable }
         guard let event = event(for: block) else { throw Failure.eventNotFound }
         try store.remove(event, span: .thisEvent, commit: true)
         revision &+= 1
     }
 
-    /// Removes every Blockey block on `date`. Returns how many went.
+    /// Removes every Blockey block on `date`, returning what was removed so the
+    /// caller can put any source tasks back in the inbox.
     @discardableResult
-    func deleteAllBlocks(on date: Date, calendar: Calendar = .current) throws -> Int {
+    func deleteAllBlocks(on date: Date, calendar: Calendar = .current) throws -> [Block] {
         guard access.isGranted else { throw Failure.notPermitted }
-        guard let blockeyCalendar = blockeyCalendar() else { return 0 }
+        guard let blockeyCalendar = blockeyCalendar() else { return [] }
 
         let start = calendar.startOfDay(for: date)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return 0 }
+        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
 
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: [blockeyCalendar])
         let events = store.events(matching: predicate)
-        for event in events {
-            try store.remove(event, span: .thisEvent, commit: false)
+        let removed = events.map { Block(event: $0, blockeyCalendarID: blockeyCalendar.calendarIdentifier) }
+
+        do {
+            for event in events {
+                try store.remove(event, span: .thisEvent, commit: false)
+            }
+            try store.commit()
+        } catch {
+            // Removals staged with `commit: false` survive a thrown error and
+            // would be flushed by the next unrelated save — blocks vanishing at
+            // a moment with no connection to this action. Discard them.
+            store.reset()
+            throw error
         }
-        try store.commit()
+
         revision &+= 1
-        return events.count
+        return removed
     }
 
     /// Locates the event behind a block.
