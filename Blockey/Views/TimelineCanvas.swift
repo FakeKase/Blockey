@@ -32,7 +32,7 @@ struct TimelineCanvas: View {
 
     private let hourHeight: CGFloat = 64
     private let gutterWidth: CGFloat = 52
-    private let minimumBlockHeight: CGFloat = 24
+    private let minimumBlockHeight: CGFloat = 20
 
     private struct DragState: Equatable {
         enum Mode { case move, resize }
@@ -209,8 +209,10 @@ struct TimelineCanvas: View {
 
             Group {
                 if item.isFixed {
-                    FixedEventChip(block: item)
-                        .frame(width: slot.width, height: max(minimumBlockHeight, height(for: item.range)))
+                    let chipHeight = max(minimumBlockHeight, height(for: item.range))
+                    FixedEventChip(block: item, availableHeight: chipHeight)
+                        .frame(width: slot.width, height: chipHeight, alignment: .top)
+                        .clipped()
                         .offset(x: gutterWidth + slot.x, y: y(for: item.range.start))
                 } else {
                     blockView(item, slot: slot)
@@ -225,11 +227,19 @@ struct TimelineCanvas: View {
         let growth = (isDragging && drag?.mode == .resize) ? (drag?.offset ?? 0) : 0
         let chipHeight = max(minimumBlockHeight, height(for: block.range) + growth)
 
-        return BlockChip(block: block, isDragging: isDragging)
-            .frame(width: slot.width, height: chipHeight)
+        return BlockChip(block: block, availableHeight: chipHeight)
+            .frame(width: slot.width, height: chipHeight, alignment: .top)
+            // The invariant: a block never draws outside the time it occupies.
+            // Content that cannot fit is cut off rather than allowed to spill
+            // over its neighbours.
+            .clipped()
             .overlay(alignment: .bottom) {
                 if block.isEditable { resizeGrabber(for: block) }
             }
+            .shadow(color: .black.opacity(isDragging ? 0.18 : 0),
+                    radius: isDragging ? 8 : 0, y: isDragging ? 4 : 0)
+            .scaleEffect(isDragging ? 1.02 : 1)
+            .animation(.snappy(duration: 0.18), value: isDragging)
             .offset(x: gutterWidth + slot.x, y: y(for: block.range.start) + moveOffset)
             .zIndex(isDragging ? 10 : 1)
             .onTapGesture { onSelectBlock(block) }
@@ -327,73 +337,120 @@ struct TimelineCanvas: View {
 
 // MARK: - Chips
 
+/// How much a chip can say is a function of how long its block is.
+///
+/// A 30-minute block is 32pt tall at this zoom, and a stacked title-over-time
+/// layout needs about 41 — so the chip has to change shape rather than
+/// overflow. It used to overflow: a flexible frame sizes itself to its content
+/// when the content will not shrink, and the rigid frame outside it then
+/// centred the oversized chip, spilling it several points into the blocks above
+/// and below. Choosing a layout that fits is the fix; clipping is the guard.
+enum ChipDensity {
+    /// Title, with the time range beneath it.
+    case full
+    /// Title and time range share one line.
+    case single
+    /// Only the title fits.
+    case titleOnly
+
+    init(height: CGFloat) {
+        switch height {
+        case 44...: self = .full
+        case 26...: self = .single
+        default:    self = .titleOnly
+        }
+    }
+}
+
+/// "9:00 – 9:30 PM" — the interval style elides whatever the two ends share,
+/// which is what keeps an end time affordable on a single line.
+func timeRangeText(_ range: TimeRange) -> String {
+    (range.start..<range.end).formatted(.interval.hour().minute())
+}
+
 private struct BlockChip: View {
     let block: Block
-    var isDragging: Bool
+    /// The height the block's duration earns it. The chip must fit inside it.
+    var availableHeight: CGFloat
 
     @Environment(\.colorScheme) private var scheme
 
+    private var density: ChipDensity { ChipDensity(height: availableHeight) }
+
     var body: some View {
         let tint = block.category.tint
-        // Six categories cannot be told apart by hue alone — under deuteranopia
-        // the closest pair stays below the threshold of noticing however the
-        // palette is tuned. The symbol is what actually distinguishes them.
-        HStack(alignment: .top, spacing: 5) {
+        HStack(alignment: density == .full ? .top : .center, spacing: 5) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(tint)
                 .frame(width: 3)
-            Image(systemName: block.category.symbolName)
-                .font(.caption2)
-                .foregroundStyle(tint)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(block.title)
-                    .font(.footnote.weight(.semibold))
-                    .lineLimit(2)
-                Text(block.range.start, format: .dateTime.hour().minute())
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
+            CategoryGlyph(category: block.category,
+                          size: density == .titleOnly ? .caption2 : .caption)
+            body(tint: tint)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, density == .titleOnly ? 2 : 4)
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(tint.opacity(scheme == .dark ? 0.30 : 0.17), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(tint.opacity(scheme == .dark ? 0.7 : 0.45), lineWidth: 1))
-        .shadow(color: .black.opacity(isDragging ? 0.18 : 0), radius: isDragging ? 8 : 0, y: isDragging ? 4 : 0)
-        .scaleEffect(isDragging ? 1.02 : 1)
-        .animation(.snappy(duration: 0.18), value: isDragging)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        // Past accessibility1 a footnote outgrows even an hour-long block, and
+        // a timeline of clipped titles is worse than one of slightly small
+        // ones. Capped here only; every other screen scales all the way.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(block.title), \(block.category.title)")
-        .accessibilityValue(Text(block.range.start, format: .dateTime.hour().minute()))
+        .accessibilityValue(timeRangeText(block.range))
+    }
+
+    @ViewBuilder
+    private func body(tint: Color) -> some View {
+        switch density {
+        case .full:
+            VStack(alignment: .leading, spacing: 1) {
+                title(lineLimit: 2)
+                time
+            }
+            Spacer(minLength: 0)
+        case .single:
+            title(lineLimit: 1)
+            Spacer(minLength: 4)
+            time.layoutPriority(1)
+        case .titleOnly:
+            title(lineLimit: 1, font: .caption2.weight(.semibold))
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func title(lineLimit: Int, font: Font = .footnote.weight(.semibold)) -> some View {
+        Text(block.title)
+            .font(font)
+            .lineLimit(lineLimit)
+    }
+
+    private var time: some View {
+        Text(timeRangeText(block.range))
+            .font(.caption2)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
     }
 }
 
 private struct FixedEventChip: View {
     let block: Block
+    var availableHeight: CGFloat
 
     @Environment(\.colorScheme) private var scheme
 
+    private var density: ChipDensity { ChipDensity(height: availableHeight) }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: density == .full ? .top : .center, spacing: 6) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(.secondary.opacity(0.5))
                 .frame(width: 3)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(block.title)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(2)
-                    .foregroundStyle(.secondary)
-                Text(block.range.start, format: .dateTime.hour().minute())
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer(minLength: 0)
+            content
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, density == .titleOnly ? 2 : 4)
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Kept quieter than a block in both schemes. In dark mode a plain
@@ -409,8 +466,43 @@ private struct FixedEventChip: View {
                 .strokeBorder(Color.primary.opacity(scheme == .dark ? 0.18 : 0.13),
                               style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
         )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(block.title), meeting, not movable")
-        .accessibilityValue(Text(block.range.start, format: .dateTime.hour().minute()))
+        .accessibilityValue(timeRangeText(block.range))
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch density {
+        case .full:
+            VStack(alignment: .leading, spacing: 1) {
+                title(lineLimit: 2)
+                time
+            }
+            Spacer(minLength: 0)
+        case .single:
+            title(lineLimit: 1)
+            Spacer(minLength: 4)
+            time.layoutPriority(1)
+        case .titleOnly:
+            title(lineLimit: 1, font: .caption2.weight(.medium))
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func title(lineLimit: Int, font: Font = .caption.weight(.medium)) -> some View {
+        Text(block.title)
+            .font(font)
+            .lineLimit(lineLimit)
+            .foregroundStyle(.secondary)
+    }
+
+    private var time: some View {
+        Text(timeRangeText(block.range))
+            .font(.caption2)
+            .monospacedDigit()
+            .foregroundStyle(.tertiary)
     }
 }

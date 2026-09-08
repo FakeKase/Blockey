@@ -28,6 +28,26 @@ enum BlockCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    /// The category's face throughout the app.
+    ///
+    /// An emoji rather than an SF Symbol, for two reasons. Six categories
+    /// cannot be told apart by hue alone — under deuteranopia the closest pair
+    /// stays below the threshold of noticing however the palette is tuned — and
+    /// an emoji brings its own colour and silhouette, so it distinguishes a
+    /// block where a monochrome tinted glyph only repeats the tint. It also
+    /// reads as friendlier, which is the point of a day you plan every morning.
+    var emoji: String {
+        switch self {
+        case .deepWork: return "\u{1F9E0}"       // brain
+        case .meeting:  return "\u{1F465}"       // busts in silhouette
+        case .admin:    return "\u{1F5C2}\u{FE0F}" // card index dividers
+        case .personal: return "\u{1F3E1}"       // house with garden
+        case .health:   return "\u{1F3C3}"       // runner
+        case .rest:     return "\u{2615}"        // hot beverage
+        }
+    }
+
+    /// What to draw where emoji are unavailable. See `Emoji.isSupported`.
     var symbolName: String {
         switch self {
         case .deepWork: return "brain.head.profile"
@@ -38,6 +58,9 @@ enum BlockCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .rest:     return "cup.and.saucer.fill"
         }
     }
+
+    /// Title with its emoji, for pickers and list rows.
+    var labelled: String { Emoji.prefixed(emoji, title) }
 
     /// Light and dark variants. The dark values are lifted rather than reused:
     /// the same tint that reads well on white sits at barely 1.2:1 on black, at

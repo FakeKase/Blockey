@@ -41,7 +41,7 @@ struct BlockDetailSheet: View {
                 Section("Category") {
                     Picker("Category", selection: $category) {
                         ForEach(BlockCategory.allCases) { option in
-                            Label(option.title, systemImage: option.symbolName).tag(option)
+                            Text(option.labelled).tag(option)
                         }
                     }
                     .pickerStyle(.menu)

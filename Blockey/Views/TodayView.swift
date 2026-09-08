@@ -309,6 +309,8 @@ struct TodayView: View {
     private var emptyDayCard: some View {
         if contents.isEmpty && armedTask == nil {
             VStack(spacing: 7) {
+                EmojiIllustration(emoji: "\u{1F5D3}\u{FE0F}", symbolName: "calendar")
+                    .padding(.bottom, 2)
                 if let template = templateForToday {
                     Text("Nothing planned yet")
                         .font(.headline)
@@ -419,8 +421,14 @@ struct TodayView: View {
     private var bannerView: some View {
         if let banner {
             HStack(spacing: 7) {
-                Image(systemName: banner.isWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .font(.caption)
+                Group {
+                    if Emoji.isSupported {
+                        Text(banner.isWarning ? "\u{26A0}\u{FE0F}" : "\u{2705}")
+                    } else {
+                        Image(systemName: banner.isWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    }
+                }
+                .font(.caption)
                 Text(banner.text)
                     .font(.footnote.weight(.medium))
                     .fixedSize(horizontal: false, vertical: true)

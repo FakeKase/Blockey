@@ -106,10 +106,8 @@ struct InboxTray: View {
             ForEach(tasks) { task in
                 Button { onArm(task) } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: task.category.symbolName)
-                            .font(.caption)
-                            .foregroundStyle(task.category.tint)
-                            .frame(width: 20)
+                        CategoryGlyph(category: task.category)
+                            .frame(width: 24)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(task.title)
@@ -143,9 +141,7 @@ struct InboxTray: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "tray")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(.tertiary)
+            EmojiIllustration(emoji: "\u{1F4E5}", symbolName: "tray")
             Text("Inbox is empty")
                 .font(.headline)
             Text("Add what needs doing, then tap it to drop it on the day.")

@@ -134,10 +134,8 @@ struct TemplateEditor: View {
                         TemplateRowEditor(row: row)
                     } label: {
                         HStack(spacing: 10) {
-                            Image(systemName: row.category.symbolName)
-                                .font(.caption)
-                                .foregroundStyle(row.category.tint)
-                                .frame(width: 20)
+                            CategoryGlyph(category: row.category)
+                                .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(row.title)
                                 Text("\(timeLabel(row.startMinuteOfDay)) · \(row.durationMinutes) min")
@@ -200,7 +198,7 @@ struct TemplateRowEditor: View {
             Section("Category") {
                 Picker("Category", selection: categoryBinding) {
                     ForEach(BlockCategory.allCases) { option in
-                        Label(option.title, systemImage: option.symbolName).tag(option)
+                        Text(option.labelled).tag(option)
                     }
                 }
                 .pickerStyle(.menu)
