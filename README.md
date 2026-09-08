@@ -40,15 +40,31 @@ simulator-and-Debug only, behind a compile-time guard.
 
 ## Putting it on your phone
 
+Signing is already configured — `DEVELOPMENT_TEAM` is set to the personal team
+in `project.pbxproj`, so there is nothing to fill in.
+
 1. Open `Blockey.xcodeproj` in Xcode.
-2. Select the **Blockey** target → *Signing & Capabilities*.
-3. Set **Team** to your personal Apple ID (add it under Xcode → Settings →
-   Accounts if it isn't there).
-4. Change the bundle identifier if `com.kase.blockey` is taken — it must be
-   globally unique.
-5. Plug in the phone, pick it as the destination, and Run.
-6. On the phone: Settings → General → VPN & Device Management → trust the
-   developer certificate.
+2. Plug the phone in, unlock it, and pick it as the destination.
+3. Run.
+4. First time only, on the phone: Settings → General → VPN & Device Management
+   → trust the developer certificate.
+
+Two prerequisites, both one-time and both on the phone:
+
+- **Developer Mode** must be on: Settings → Privacy & Security → Developer Mode.
+  Without it the device cannot be registered and Xcode reports the misleading
+  "your team has no devices from which to generate a provisioning profile".
+- The Apple ID must be signed in under Xcode → Settings → Accounts.
+
+Updating the app later is the same thing: Run again. Installing over the top
+keeps your tasks and templates.
+
+### Only build from this checkout
+
+The signing settings live in this repository. A second clone elsewhere will
+build a *different* app — one commit behind, or unsigned — and it is not
+obvious from Xcode which one is open. If a change appears to have had no
+effect on the phone, check the window title before anything else.
 
 ### The seven-day expiry
 
