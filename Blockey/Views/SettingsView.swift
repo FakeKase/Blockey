@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var isImporting = false
     @State private var backupMessage: String?
+    @State private var pendingRestore: PendingRestore?
 
     @AppStorage(SettingsKey.dayStartMinute) private var dayStartMinute = SettingsKey.defaultDayStart
     @AppStorage(SettingsKey.dayEndMinute) private var dayEndMinute = SettingsKey.defaultDayEnd
@@ -118,7 +119,20 @@ struct SettingsView: View {
                 }
             }
             .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
-                importBackup(result)
+                stageRestore(result)
+            }
+            // Restoring deletes every task and template before inserting the
+            // backup's, so it must never happen on the strength of one tap in a
+            // file picker. The counts go in the message because "replace" means
+            // nothing without knowing what is being replaced.
+            .alert("Replace your tasks and templates?",
+                   isPresented: Binding(get: { pendingRestore != nil },
+                                        set: { if !$0 { pendingRestore = nil } }),
+                   presenting: pendingRestore) { pending in
+                Button("Replace", role: .destructive) { restore(pending) }
+                Button("Cancel", role: .cancel) {}
+            } message: { pending in
+                Text(pending.warning)
             }
         }
     }
@@ -132,7 +146,12 @@ struct SettingsView: View {
         }
     }
 
-    private func importBackup(_ result: Result<URL, Error>) {
+    /// Decodes the chosen file and holds it until the user confirms.
+    ///
+    /// Reading the file here rather than after the confirmation means a file
+    /// that is not a backup is rejected before the user is asked to destroy
+    /// anything, so "Replace" is only ever offered for something restorable.
+    private func stageRestore(_ result: Result<URL, Error>) {
         do {
             let url = try result.get()
             // A file returned by the picker lives outside the sandbox.
@@ -142,10 +161,22 @@ struct SettingsView: View {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let backup = try decoder.decode(BlockeyBackup.self, from: Data(contentsOf: url))
-            let restored = try backup.restore(into: context)
-            backupMessage = "Restored \(restored.tasks) task\(restored.tasks == 1 ? "" : "s") and \(restored.templates) template\(restored.templates == 1 ? "" : "s")."
+            pendingRestore = PendingRestore(
+                backup: backup,
+                existingTasks: (try? context.fetchCount(FetchDescriptor<TaskItem>())) ?? 0,
+                existingTemplates: (try? context.fetchCount(FetchDescriptor<DayTemplate>())) ?? 0)
         } catch {
             backupMessage = "That file isn’t a Blockey backup."
+        }
+    }
+
+    private func restore(_ pending: PendingRestore) {
+        defer { pendingRestore = nil }
+        do {
+            let restored = try pending.backup.restore(into: context)
+            backupMessage = "Restored \(restored.tasks) task\(restored.tasks == 1 ? "" : "s") and \(restored.templates) template\(restored.templates == 1 ? "" : "s")."
+        } catch {
+            backupMessage = "Could not restore that backup."
         }
     }
 

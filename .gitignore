@@ -1,6 +1,23 @@
+# macOS
 .DS_Store
+
+# Xcode build output and per-user state
 build/
 DerivedData/
 xcuserdata/
 *.xcuserstate
-.claude/settings.local.json
+*.xcuserdatad
+
+# Local tooling and working notes — not needed to build or run the app.
+# Keep these out of a clone; they are personal to this machine.
+CLAUDE.md
+BLOCKEY_IMPROVEMENTS.md
+.claude/
+solopreneur-agents/
+
+# Bug-report screenshots
+issues/
+
+# Scratch output from scripts/run.sh and scripts/demo.sh
+*.png
+!Blockey/Assets.xcassets/**/*.png

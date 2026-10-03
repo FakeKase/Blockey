@@ -65,6 +65,34 @@ struct TodayView: View {
         return TimeRange(start: max(window.start, now), end: max(window.start, window.end))
     }
 
+    /// Blocks whose token is gone, so Blockey can no longer tell whether they
+    /// came from a task. Theirs is the one case "back to the inbox" cannot
+    /// honour, and the only way work is lost for good.
+    private var untaggedBlocks: Int {
+        contents.blocks.filter { $0.token == nil }.count
+    }
+
+    private var clearWarning: String {
+        let promise = "Anything you placed from the inbox goes back to the inbox."
+        guard untaggedBlocks > 0 else { return promise }
+        return promise + " " + untaggedLossSentence
+    }
+
+    /// Replacing clears the day first, so it carries the same risk and says so.
+    private var restampWarning: String {
+        let base = "Replacing clears every block on \(weekdayName) \u{2014} including ones you placed by hand \u{2014} and stamps the template fresh. Adding keeps them and plans around them."
+        guard untaggedBlocks > 0 else { return base }
+        return base + " " + untaggedLossSentence
+    }
+
+    /// Said wherever blocks are about to be deleted: a block with no token
+    /// cannot be traced back to a task, so it cannot be put back.
+    private var untaggedLossSentence: String {
+        untaggedBlocks == 1
+            ? "One block has lost its Blockey tag, so it cannot be returned \u{2014} this deletes it for good."
+            : "\(untaggedBlocks) blocks have lost their Blockey tag, so they cannot be returned \u{2014} this deletes them for good."
+    }
+
     private var visibleRange: TimeRange {
         var start = window.start
         var end = window.end
@@ -163,14 +191,14 @@ struct TodayView: View {
             Button("Add the template on top") { applyTemplate() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Replacing clears every block on \(weekdayName) — including ones you placed by hand — and stamps the template fresh. Adding keeps them and plans around them.")
+            Text(restampWarning)
         }
         .confirmationDialog("Clear \(contents.blocks.count) block\(contents.blocks.count == 1 ? "" : "s")?",
                             isPresented: $isConfirmingClear, titleVisibility: .visible) {
             Button("Clear the day", role: .destructive) { clearDay() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Anything you placed from the inbox goes back to the inbox.")
+            Text(clearWarning)
         }
         .task {
             StarterData.seedIfNeeded(context: context)
@@ -181,6 +209,7 @@ struct TodayView: View {
             }
             #endif
             reload()
+            scheduleSigningReminder()
             #if DEBUG && targetEnvironment(simulator)
             if DemoScenario.shouldStamp {
                 try? await _Concurrency.Task.sleep(for: .milliseconds(600))
@@ -605,30 +634,60 @@ struct TodayView: View {
     /// Blocks carry their source task in the token, which is what makes this
     /// non-destructive for work the user typed: template-stamped blocks have no
     /// source and simply go, while placed tasks return to where they came from.
-    @discardableResult
-    private func clearBlocks() -> Bool {
+    /// What clearing a day actually did: how much came back, and how much could
+    /// not. `nil` when the clear itself failed.
+    private struct ClearOutcome {
+        let returned: Int
+        let lost: Int
+    }
+
+    private func clearBlocks() -> ClearOutcome? {
         do {
             let removed = try calendars.deleteAllBlocks(on: selectedDate, calendar: calendar)
             var index = nextInboxSortIndex()
+            var returned = 0
             for block in removed where block.token?.sourceTaskID != nil {
                 context.insert(TaskItem(title: block.title,
                                         estimatedMinutes: Int(block.range.duration / 60),
                                         category: block.category,
                                         sortIndex: index))
                 index -= 1
+                returned += 1
             }
-            return true
+            // Counted from what was deleted, not from `contents`: the view's
+            // copy leaves out declined and cancelled events, which are deleted
+            // all the same, and it can be a fetch behind the store.
+            return ClearOutcome(returned: returned, lost: removed.filter { $0.token == nil }.count)
         } catch {
             show(error.localizedDescription, warning: true)
-            return false
+            return nil
         }
     }
 
+    /// Asks the calendar to remind the user to re-sign before this build stops
+    /// launching. A no-op on a build that does not expire, and on the simulator,
+    /// where there is no provisioning profile to read.
+    private func scheduleSigningReminder() {
+        guard let expiry = ProvisioningProfile.expirationDate else { return }
+        // Failing to write a reminder is not worth interrupting the user over;
+        // they came here to plan their day.
+        // `@discardableResult` does not survive `try?`, which wraps it in an Optional.
+        _ = try? calendars.ensureSigningReminder(expiring: expiry, now: now)
+    }
+
     private func clearDay() {
-        let returned = contents.blocks.filter { $0.token?.sourceTaskID != nil }.count
-        guard clearBlocks() else { return }
+        guard let outcome = clearBlocks() else { return }
         reload()
-        show(returned == 0 ? "Day cleared" : "Day cleared · \(returned) back in the inbox")
+        switch (outcome.returned, outcome.lost) {
+        case (0, 0):
+            show("Day cleared")
+        case (let back, 0):
+            show("Day cleared · \(back) back in the inbox")
+        case (0, let gone):
+            show("Day cleared · \(gone) could not be returned", warning: true)
+        case (let back, let gone):
+            show("Day cleared · \(back) back in the inbox, \(gone) lost", warning: true)
+        }
     }
 
     private func stampTemplate() {
@@ -647,17 +706,25 @@ struct TodayView: View {
     }
 
     private func replaceWithTemplate() {
-        guard clearBlocks() else { return }
+        guard let outcome = clearBlocks() else { return }
         reload()
-        applyTemplate()
+        // Carried into the stamp banner, which would otherwise overwrite any
+        // mention of blocks that could not be returned to the inbox.
+        applyTemplate(afterClearing: outcome)
     }
 
-    private func applyTemplate() {
+    private func applyTemplate(afterClearing cleared: ClearOutcome? = nil) {
         guard let template = templateForToday else { return }
+        // The floor, not a narrowed window: the stamper widens its window back
+        // out to cover each row's intended time, so passing `plannableWindow`
+        // here would be undone a few lines into `stamp`. Only `notBefore`
+        // survives that widening. Nil on any day but today, which leaves
+        // stamping a past or future day exactly as it was.
         let result = TemplateStamper.stamp(items: template.stampItems,
                                            on: selectedDate,
                                            busy: contents.busy,
                                            window: window,
+                                           notBefore: isToday ? now : nil,
                                            calendar: calendar)
 
         var created = 0
@@ -696,6 +763,8 @@ struct TodayView: View {
         let toInbox = result.unplaced.count + failures.count
         if toInbox > 0 { message += " · \(toInbox) to inbox" }
         if !failures.isEmpty { message += " (\(failures.count) couldn’t be saved)" }
-        show(message, warning: toInbox > 0)
+        let lost = cleared?.lost ?? 0
+        if lost > 0 { message += " · \(lost) lost" }
+        show(message, warning: toInbox > 0 || lost > 0)
     }
 }

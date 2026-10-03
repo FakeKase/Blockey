@@ -190,8 +190,10 @@ final class CalendarService {
         var contents = DayContents()
 
         for event in store.events(matching: predicate) {
-            // A declined invitation is not a commitment and must not eat a gap.
+            // Neither a cancelled event nor one you declined is a commitment,
+            // so neither may eat a gap.
             if event.status == .canceled { continue }
+            if event.isDeclinedByUser { continue }
             let block = Block(event: event, blockeyCalendarID: ourID)
 
             if block.isAllDay {
@@ -276,7 +278,10 @@ final class CalendarService {
         guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
 
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: [blockeyCalendar])
-        let events = store.events(matching: predicate)
+        // All-day events in this calendar are not blocks — nothing else in the
+        // app treats them as one, they consume no time, and the signing reminder
+        // is one of them. Clearing the day leaves them alone.
+        let events = store.events(matching: predicate).filter { !$0.isAllDay }
         let removed = events.map { Block(event: $0, blockeyCalendarID: blockeyCalendar.calendarIdentifier) }
 
         do {
@@ -294,6 +299,87 @@ final class CalendarService {
 
         revision &+= 1
         return removed
+    }
+
+    // MARK: - Keeping the app alive
+
+    /// Puts a reminder in the calendar that this build is about to stop
+    /// launching, and keeps exactly one of them pending.
+    ///
+    /// Deliberately a calendar event and not a local notification: the reminder
+    /// has to arrive *after* the app can no longer be opened, and a notification
+    /// scheduled by the app dies with the app's sandbox. An `EKAlarm` lives in
+    /// the calendar store, so it reaches the Lock Screen and the Watch with the
+    /// app uninstallable — and it needs no notification permission, which is a
+    /// second prompt the user would otherwise have to be asked for.
+    ///
+    /// All-day, so it cannot consume a gap the user could have planned into.
+    ///
+    /// - Returns: whether a reminder was written.
+    @discardableResult
+    func ensureSigningReminder(expiring expiry: Date,
+                               now: Date = .now,
+                               calendar: Calendar = .current) throws -> Bool {
+        guard access.isGranted else { return false }
+        guard let searchEnd = calendar.date(byAdding: .day, value: 60, to: now) else { return false }
+
+        let wanted = SigningReminder.day(expiring: expiry, now: now, calendar: calendar)
+
+        // Create the calendar when there is a reminder to put in it — a new
+        // install should be warned even if the user has not made a block yet —
+        // but only look when there is not, so a build that never expires does
+        // not bring a calendar into existence just to find that out.
+        let found = wanted == nil ? blockeyCalendar() : try ensureBlockeyCalendar()
+        guard let blockeyCalendar = found else { return false }
+
+        // One reminder outstanding at a time. Re-signing moves the date, and
+        // moving to a paid account removes the need altogether — in both cases
+        // the reminder already in the calendar is now a lie and has to go.
+        let pending = store.events(matching: store.predicateForEvents(withStart: calendar.startOfDay(for: now),
+                                                                      end: searchEnd,
+                                                                      calendars: [blockeyCalendar]))
+            .filter { $0.title == SigningReminder.title }
+
+        if let wanted, pending.count == 1,
+           let only = pending.first, calendar.isDate(only.startDate, inSameDayAs: wanted) {
+            return false
+        }
+
+        for stale in pending {
+            try? store.remove(stale, span: .thisEvent, commit: false)
+        }
+
+        guard let day = wanted else {
+            // Nothing to schedule — this build does not expire out from under
+            // the user. Flush the cleanup and stop.
+            if !pending.isEmpty {
+                try store.commit()
+                revision &+= 1
+            }
+            return false
+        }
+
+        let event = EKEvent(eventStore: store)
+        event.calendar = blockeyCalendar
+        event.title = SigningReminder.title
+        event.isAllDay = true
+        event.startDate = day
+        event.endDate = day
+        event.notes = SigningReminder.notes(expiry: expiry)
+        event.addAlarm(EKAlarm(absoluteDate: SigningReminder.alarmDate(on: day,
+                                                                      now: now,
+                                                                      calendar: calendar)))
+
+        do {
+            try store.save(event, span: .thisEvent, commit: true)
+        } catch {
+            // Staged removals survive a throw and would otherwise be flushed by
+            // the next unrelated save, taking a reminder with them.
+            store.reset()
+            throw error
+        }
+        revision &+= 1
+        return true
     }
 
     /// Locates the event behind a block.
@@ -372,4 +458,17 @@ final class CalendarService {
     }
     #endif
     #endif
+}
+
+private extension EKEvent {
+    /// Whether *you* declined this invitation.
+    ///
+    /// Not the same question as `status == .canceled`, which is the organiser
+    /// calling the meeting off — the two were conflated here once, and the
+    /// result was that declined meetings still consumed free time. A decline is
+    /// recorded on your own attendee record, and an event with no attendees at
+    /// all (anything you created yourself) is never declined.
+    var isDeclinedByUser: Bool {
+        attendees?.contains { $0.isCurrentUser && $0.participantStatus == .declined } ?? false
+    }
 }

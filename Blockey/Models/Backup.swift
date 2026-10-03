@@ -114,12 +114,56 @@ struct BlockeyBackup: Codable {
             context.insert(TemplateAssignment(weekday: assignment.weekday, templateID: assignment.templateID))
         }
 
-        try context.save()
+        do {
+            try context.save()
+        } catch {
+            // Every task and template was deleted a few lines above and those
+            // deletions are still pending. Without this the user is told the
+            // restore failed while the next autosave quietly carries out the
+            // destruction anyway.
+            context.rollback()
+            throw error
+        }
         return (tasks.count, templates.count)
     }
 
     var suggestedFilename: String {
         "Blockey-\(exportedAt.formatted(.iso8601.year().month().day())).json"
+    }
+}
+
+/// A decoded backup waiting on the user's confirmation, and what accepting it costs.
+///
+/// `restore(into:)` deletes every task, template and weekday assignment before
+/// inserting the backup's, and the only thing standing between that and a
+/// mis-tap in a file picker is this confirmation — so the warning states the
+/// numbers rather than the idea, and names the date the backup was saved, since
+/// reaching for last month's file is the way this goes wrong.
+struct PendingRestore {
+    let backup: BlockeyBackup
+    let existingTasks: Int
+    let existingTemplates: Int
+
+    var warning: String {
+        let saved = backup.exportedAt.formatted(date: .abbreviated, time: .shortened)
+        let incoming = "\(Self.counted(backup.tasks.count, "task")) and \(Self.counted(backup.templates.count, "template"))"
+
+        guard existingTasks + existingTemplates > 0 else {
+            return "Saved \(saved). It holds \(incoming). Your calendar blocks are not affected."
+        }
+
+        let losing = "\(Self.counted(existingTasks, "task")) and \(Self.counted(existingTemplates, "template"))"
+        return "Saved \(saved). This deletes the \(losing) on this phone and puts back \(incoming). "
+            + "Your calendar blocks are not affected."
+    }
+
+    /// "1 task", "4 tasks", "no tasks" — a count the sentence can absorb.
+    static func counted(_ n: Int, _ noun: String) -> String {
+        switch n {
+        case 0:  return "no \(noun)s"
+        case 1:  return "1 \(noun)"
+        default: return "\(n) \(noun)s"
+        }
     }
 }
 

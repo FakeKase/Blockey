@@ -88,6 +88,8 @@ enum TemplateStamper {
     /// - Parameters:
     ///   - busy: existing commitments — real meetings and any blocks already there.
     ///   - window: the user's planning window (e.g. 07:00–22:00).
+    ///   - notBefore: the earliest moment that may be planned, for stamping
+    ///     today part-way through it. `nil` for any other day.
     ///
     /// The window is widened to cover any item whose intended time falls outside
     /// it, so a 06:00 workout in a template stays at 06:00 rather than being
@@ -96,6 +98,7 @@ enum TemplateStamper {
                       on date: Date,
                       busy: [TimeRange],
                       window: TimeRange,
+                      notBefore: Date? = nil,
                       calendar: Calendar = .current) -> Result {
         let midnight = calendar.startOfDay(for: date)
         let dayEnd = calendar.date(byAdding: .day, value: 1, to: midnight)
@@ -120,6 +123,17 @@ enum TemplateStamper {
         }
         effective = TimeRange(start: Swift.max(effective.start, midnight),
                               end: Swift.min(effective.end, dayEnd))
+
+        // Hours that have already gone are not plannable, and this has to be
+        // applied *after* the widening above — which exists to honour a
+        // template's own intentions and would otherwise reach straight back
+        // past it. Stamping at 11am must not write a 9:00 block into a morning
+        // that has been and gone. Rows left with nowhere to go become inbox
+        // items by the ordinary rule, rather than silently landing in the past.
+        if let notBefore, notBefore > effective.start {
+            effective = TimeRange(start: Swift.min(notBefore, effective.end),
+                                  end: effective.end)
+        }
 
         var occupied = busy
         var placements: [Placement] = []
