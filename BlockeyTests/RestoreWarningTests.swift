@@ -52,11 +52,14 @@ struct RestoreWarningTests {
     /// backup was saved has to be in front of the user before they confirm.
     @Test("The warning dates the backup")
     func datesTheBackup() {
-        let saved = Calendar.current.date(from: DateComponents(year: 2026, month: 3, day: 14, hour: 9))!
+        // Some weeks back from today in the machine's own calendar (issue #6, see TestDates).
+        let saved = Calendar.current.date(byAdding: .day, value: -40, to: TestDates.today())!
         let pending = PendingRestore(backup: backup(tasks: 1, templates: 1, exportedAt: saved),
                                     existingTasks: 5, existingTemplates: 5)
 
-        #expect(pending.warning.contains("2026"), "the backup's date is missing from: \(pending.warning)")
+        // The same call PendingRestore.warning makes, so the whole date and time must be there.
+        let shown = saved.formatted(date: .abbreviated, time: .shortened)
+        #expect(pending.warning.contains(shown), "the backup's date is missing from: \(pending.warning)")
     }
 
     @Test("Blocks are named as unaffected, because they are")

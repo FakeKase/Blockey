@@ -12,12 +12,13 @@ struct DayPlannerTests {
     private let calendar = Calendar.current
 
     /// A Monday far from any DST change in common zones.
-    private func day() -> Date {
-        calendar.date(from: DateComponents(year: 2026, month: 10, day: 5))!
-    }
+    /// Found from today in this machine's calendar, never a literal year (issue #6).
+    private let monday = TestDates.ordinaryDay(weekday: 2)
+
+    private func day() -> Date { monday }
 
     private func at(_ hour: Int, _ minute: Int = 0) -> Date {
-        calendar.date(from: DateComponents(year: 2026, month: 10, day: 5, hour: hour, minute: minute))!
+        calendar.date(bySettingHour: hour, minute: minute, second: 0, of: monday)!
     }
 
     private func range(_ h1: Int, _ h2: Int) -> TimeRange {
@@ -476,7 +477,8 @@ struct StampMessageTests {
     /// Today, built from the live calendar so the test holds in any calendar system.
     private func inputs() -> DayPlanInputs {
         let start = calendar.startOfDay(for: .now)
-        let window = TimeRange(start: start.addingTimeInterval(7 * 3600), end: start.addingTimeInterval(22 * 3600))
+        let window = TimeRange(start: calendar.date(bySettingHour: 7, minute: 0, second: 0, of: start)!,
+                               end: calendar.date(bySettingHour: 22, minute: 0, second: 0, of: start)!)
         return DayPlanInputs(date: start, now: start, isToday: false, window: window,
                              plannableWindow: window, alarmMinutesBefore: nil, calendar: calendar,
                              hiddenCalendarIDs: [])
@@ -545,15 +547,16 @@ struct StampMessageTests {
 
     @Test("dayPhrase says today, tomorrow, or the weekday, in lower case only for the first two")
     func dayPhrase() {
-        // Gregorian on purpose: see StampPreviewTests, the machine's calendar is Buddhist.
+        // Pinned to Gregorian + en_US on purpose, so the expected English names are fixed. The
+        // machine's calendar is Buddhist (see TestDates). The anchor is the next Monday found from
+        // today, so Monday + 3 is always Thursday whatever day this runs.
         var cal = Calendar(identifier: .gregorian)
         cal.locale = Locale(identifier: "en_US")
-        let now = Date()
-        let start = cal.startOfDay(for: now)
+        let start = TestDates.ordinaryDay(weekday: 2, in: cal)
+        let now = cal.date(bySettingHour: 10, minute: 0, second: 0, of: start)!
         func day(_ offset: Int) -> Date { cal.date(byAdding: .day, value: offset, to: start) ?? start }
         #expect(StampPreview.dayPhrase(for: day(0), now: now, calendar: cal) == "today")
         #expect(StampPreview.dayPhrase(for: day(1), now: now, calendar: cal) == "tomorrow")
-        let phrase = StampPreview.dayPhrase(for: day(3), now: now, calendar: cal)
-        #expect(phrase == cal.weekdaySymbols[cal.component(.weekday, from: day(3)) - 1])
+        #expect(StampPreview.dayPhrase(for: day(3), now: now, calendar: cal) == "Thursday")
     }
 }

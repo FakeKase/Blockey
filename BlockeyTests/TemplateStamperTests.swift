@@ -3,12 +3,11 @@ import Foundation
 @testable import Blockey
 
 private let cal: Calendar = {
-    var c = Calendar(identifier: .gregorian)
-    c.timeZone = TimeZone(identifier: "UTC")!
-    return c
+    // The machine's own calendar identifier, pinned to UTC (issue #6, see TestDates).
+    TestDates.calendar(timeZone: TimeZone(identifier: "UTC")!)
 }()
 
-private let day = cal.date(from: DateComponents(year: 2026, month: 9, day: 8))!
+private let day = TestDates.ordinaryDay(in: cal)
 
 private func at(_ hour: Int, _ minute: Int = 0) -> Date {
     day.addingTimeInterval(TimeInterval(hour * 3600 + minute * 60))

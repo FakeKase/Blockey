@@ -15,12 +15,12 @@ struct StampingIntoThePastTests {
 
     private let calendar = Calendar.current
 
-    private func day() -> Date {
-        calendar.date(from: DateComponents(year: 2026, month: 10, day: 5))!
-    }
+    /// Found from today in this machine's calendar, never a literal year (issue #6). Stored, so
+    /// a run that crosses midnight does not move the day under a test.
+    private let day = TestDates.ordinaryDay(weekday: 2)
 
     private func at(_ hour: Int, _ minute: Int = 0) -> Date {
-        calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day())!
+        calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day)!
     }
 
     private func window() -> TimeRange {
@@ -33,7 +33,7 @@ struct StampingIntoThePastTests {
     @Test("A row whose hour has passed is never placed at its intended time")
     func elapsedRowIsNotPlacedInThePast() {
         let result = TemplateStamper.stamp(items: [morning],
-                                           on: day(),
+                                           on: day,
                                            busy: [],
                                            window: window(),
                                            notBefore: at(11),
@@ -53,7 +53,7 @@ struct StampingIntoThePastTests {
     @Test("An elapsed row moves forward rather than disappearing")
     func elapsedRowMovesForward() {
         let result = TemplateStamper.stamp(items: [morning],
-                                           on: day(),
+                                           on: day,
                                            busy: [],
                                            window: window(),
                                            notBefore: at(11),
@@ -66,7 +66,7 @@ struct StampingIntoThePastTests {
     @Test("Rows still ahead of you are untouched")
     func futureRowKeepsItsTime() {
         let result = TemplateStamper.stamp(items: [evening],
-                                           on: day(),
+                                           on: day,
                                            busy: [],
                                            window: window(),
                                            notBefore: at(11),
@@ -83,7 +83,7 @@ struct StampingIntoThePastTests {
     func noFloorIsUnchanged() {
         let early = TemplateStamper.Item(title: "Workout", startMinuteOfDay: 6 * 60, durationMinutes: 45)
         let result = TemplateStamper.stamp(items: [early, morning, evening],
-                                           on: day(),
+                                           on: day,
                                            busy: [],
                                            window: window(),
                                            calendar: calendar)
@@ -99,7 +99,7 @@ struct StampingIntoThePastTests {
     @Test("Stamping after the day is over places nothing")
     func afterTheWindowCloses() {
         let result = TemplateStamper.stamp(items: [morning, evening],
-                                           on: day(),
+                                           on: day,
                                            busy: [],
                                            window: window(),
                                            notBefore: at(23),
@@ -113,7 +113,7 @@ struct StampingIntoThePastTests {
     func floorHoldsAllDay() {
         for hour in 7...21 {
             let result = TemplateStamper.stamp(items: [morning, evening],
-                                               on: day(),
+                                               on: day,
                                                busy: [],
                                                window: window(),
                                                notBefore: at(hour),

@@ -36,6 +36,9 @@ struct ProvisioningProfileTests {
     func parsesExpiry() throws {
         let found = try #require(ProvisioningProfile.expirationDate(in: blob(plist: plist)))
 
+        // Gregorian on purpose, and the only literal year left in the tests (issue #6): it is the
+        // fixture's own ISO-8601 text above, parsed to an absolute instant, so it says nothing
+        // about Calendar.current. Rewriting it relative to now would stop it checking the parse.
         var components = DateComponents()
         components.year = 2026; components.month = 9; components.day = 25
         components.hour = 6; components.minute = 32; components.second = 29

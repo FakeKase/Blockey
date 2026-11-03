@@ -14,18 +14,23 @@ struct StampPreviewTests {
     /// Built through the injected calendar so the tests mean the same thing in any time zone.
     private struct World {
         let calendar: Calendar
-        let year: Int, month: Int, day: Int
+        /// Start of the world's day. Never a literal year: the default is an ordinary Monday found
+        /// from today in the machine's calendar (Buddhist here, see TestDates and issue #6), and
+        /// the DST tests pass the next real transition day for their zone.
+        let date: Date
 
-        init(calendar: Calendar = .current, year: Int = 2026, month: Int = 10, day: Int = 5) {
+        init(calendar: Calendar = .current, date: Date? = nil) {
             self.calendar = calendar
-            self.year = year; self.month = month; self.day = day
+            self.date = date ?? TestDates.ordinaryDay(weekday: 2, in: calendar)
         }
 
-        var date: Date { calendar.date(from: DateComponents(year: year, month: month, day: day))! }
-
+        /// Wall-clock time on the world's day, resolved through the calendar so DST days keep
+        /// their real offsets. `dayOffset` steps by calendar days, not by 86,400 seconds.
         func at(_ hour: Int, _ minute: Int = 0, dayOffset: Int = 0) -> Date {
-            calendar.date(from: DateComponents(year: year, month: month, day: day + dayOffset,
-                                               hour: hour, minute: minute))!
+            let day = calendar.date(byAdding: .day, value: dayOffset, to: date)!
+            var parts = calendar.dateComponents([.era, .year, .month, .day], from: day)
+            parts.hour = hour; parts.minute = minute
+            return calendar.date(from: parts)!
         }
 
         func range(_ h1: Int, _ m1: Int, _ h2: Int, _ m2: Int) -> TimeRange {
@@ -223,7 +228,7 @@ struct StampPreviewTests {
 
         #expect(base != rig.planner.preview(t, inputs: w.inputs(), mode: .startOver))
 
-        let nextDay = w.date.addingTimeInterval(86_400)
+        let nextDay = w.at(0, dayOffset: 1)
         #expect(base != rig.planner.preview(t, inputs: w.inputs(date: nextDay), mode: .keep))
 
         rig.writer.addFixed("Clash", w.range(9, 10))
@@ -412,9 +417,9 @@ struct StampPreviewTests {
 
     @Test("The sheet title is Today, Tomorrow, or the weekday")
     func sheetTitleUsesTodayTomorrowOrWeekday() {
-        // Gregorian on purpose, do not "fix" this back to Calendar.current: this Mac's current
-        // calendar is Buddhist, where year 2026 is 1483 CE and so a different weekday, and the
-        // weekday names asserted below would be wrong.
+        // Pinned to Gregorian + en_US on purpose, so the expected English names are fixed; do not
+        // "fix" this back to Calendar.current (this Mac's is Buddhist, see TestDates). The date is
+        // still relative to today (the next Monday via World's default): Monday + 3 is Thursday.
         var cal = Calendar(identifier: .gregorian)
         cal.locale = Locale(identifier: "en_US")
         let w = World(calendar: cal)
@@ -428,15 +433,13 @@ struct StampPreviewTests {
     // MARK: DST
 
     private var newYork: Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "America/New_York") ?? .gmt
-        cal.locale = Locale(identifier: "en_US")
-        return cal
+        // The machine's calendar identifier with New York's zone (issue #6, see TestDates).
+        TestDates.calendar(timeZone: TimeZone(identifier: "America/New_York") ?? .gmt)
     }
 
     @Test("Stamping on the spring-forward day still avoids fixed events")
     func stampOnSpringForwardDayRespectsFixedEvents() throws {
-        let w = World(calendar: newYork, year: 2026, month: 3, day: 8)
+        let w = World(calendar: newYork, date: TestDates.nextSpringForward(in: newYork))
         let rig = try Rig()
         let midnight = w.date
         // 02:00 does not exist today, so 03:00 EDT is two real hours after midnight, not three.
@@ -462,7 +465,7 @@ struct StampPreviewTests {
 
     @Test("Stamping on the fall-back day, with its repeated hour, never overlaps")
     func stampOnFallBackDayRepeatedHourPlacesWithoutOverlap() throws {
-        let w = World(calendar: newYork, year: 2026, month: 11, day: 1)
+        let w = World(calendar: newYork, date: TestDates.nextFallBack(in: newYork))
         let rig = try Rig()
         let midnight = w.date
         // 01:00 EDT is 1h after midnight; the second 01:00 (EST) is 2h after. A meeting holds

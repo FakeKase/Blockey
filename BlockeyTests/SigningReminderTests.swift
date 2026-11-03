@@ -8,26 +8,32 @@ struct SigningReminderTests {
 
     private let calendar = Calendar.current
 
-    private func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 12) -> Date {
-        calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
+    /// Day 0 is an ordinary day a little ahead of today in this machine's calendar (Buddhist
+    /// here), so no literal year and no DST edge at the start (issue #6, see TestDates).
+    private let origin = TestDates.ordinaryDay()
+
+    /// `days` calendar days after day 0, at `hour` o'clock.
+    private func date(_ days: Int, _ hour: Int = 12) -> Date {
+        let day = calendar.date(byAdding: .day, value: days, to: origin)!
+        return calendar.date(bySettingHour: hour, minute: 0, second: 0, of: day)!
     }
 
     @Test("A week-long profile is warned about two days out")
     func twoDaysNotice() {
-        let now = date(2026, 10, 3, 9)
-        let expiry = date(2026, 10, 10, 9)
+        let now = date(0, 9)
+        let expiry = date(7, 9)
 
         let day = SigningReminder.day(expiring: expiry, now: now, calendar: calendar)
 
-        #expect(day == calendar.startOfDay(for: date(2026, 10, 8)))
+        #expect(day == calendar.startOfDay(for: date(5)))
     }
 
     /// The app cannot be running on an expired profile, so there is nothing to
     /// warn about — and a reminder dated in the past would never fire.
     @Test("An expired profile gets no reminder")
     func alreadyExpired() {
-        let now = date(2026, 10, 3)
-        #expect(SigningReminder.day(expiring: date(2026, 9, 25), now: now, calendar: calendar) == nil)
+        let now = date(0)
+        #expect(SigningReminder.day(expiring: date(-8), now: now, calendar: calendar) == nil)
         #expect(SigningReminder.day(expiring: now, now: now, calendar: calendar) == nil)
     }
 
@@ -35,13 +41,13 @@ struct SigningReminderTests {
     /// and the reminder is specifically for the free-signing treadmill.
     @Test("A long-lived profile gets no reminder")
     func paidAccount() {
-        let now = date(2026, 10, 3)
-        #expect(SigningReminder.day(expiring: date(2027, 9, 8), now: now, calendar: calendar) == nil)
+        let now = date(0)
+        #expect(SigningReminder.day(expiring: date(340), now: now, calendar: calendar) == nil)
     }
 
     @Test("The horizon is inclusive at its edge")
     func horizonBoundary() {
-        let now = date(2026, 10, 3)
+        let now = date(0)
         let inside = now.addingTimeInterval(SigningReminder.horizon)
         let outside = now.addingTimeInterval(SigningReminder.horizon + 60)
 
@@ -53,8 +59,8 @@ struct SigningReminderTests {
     /// today rather than for yesterday.
     @Test("Short notice reminds today, never in the past")
     func clampsToToday() {
-        let now = date(2026, 10, 3, 14)
-        let expiry = date(2026, 10, 4, 9)
+        let now = date(0, 14)
+        let expiry = date(1, 9)
 
         let day = SigningReminder.day(expiring: expiry, now: now, calendar: calendar)
 
@@ -63,7 +69,7 @@ struct SigningReminderTests {
 
     @Test("Never returns a day in the past, across a month of expiries")
     func neverInThePast() {
-        let now = date(2026, 10, 3, 14)
+        let now = date(0, 14)
         for hours in stride(from: 1, through: 30 * 24, by: 7) {
             let expiry = now.addingTimeInterval(TimeInterval(hours) * 3600)
             guard let day = SigningReminder.day(expiring: expiry, now: now, calendar: calendar) else { continue }
@@ -74,8 +80,8 @@ struct SigningReminderTests {
 
     @Test("The alarm fires in the evening of the reminder day")
     func eveningAlarm() {
-        let now = date(2026, 10, 3, 9)
-        let day = calendar.startOfDay(for: date(2026, 10, 8))
+        let now = date(0, 9)
+        let day = calendar.startOfDay(for: date(5))
 
         let alarm = SigningReminder.alarmDate(on: day, now: now, calendar: calendar)
 
@@ -86,7 +92,7 @@ struct SigningReminderTests {
     /// An alarm set for 7pm when it is already 10pm would simply never fire.
     @Test("An alarm for an hour already past is pushed to the near future")
     func pastAlarmIsClamped() {
-        let now = date(2026, 10, 3, 22)
+        let now = date(0, 22)
         let day = calendar.startOfDay(for: now)
 
         let alarm = SigningReminder.alarmDate(on: day, now: now, calendar: calendar)
@@ -97,8 +103,10 @@ struct SigningReminderTests {
 
     @Test("The notes say when the app stops and how to fix it")
     func notesAreActionable() {
-        let notes = SigningReminder.notes(expiry: date(2026, 10, 10))
-        #expect(notes.contains("2026"))
+        let notes = SigningReminder.notes(expiry: date(7))
+        // The same call SigningReminder.notes makes, so the whole date and time must be there.
+        let shown = date(7).formatted(date: .complete, time: .shortened)
+        #expect(notes.contains(shown), "\(shown) missing from: \(notes)")
         #expect(notes.lowercased().contains("run"))
         #expect(notes.lowercased().contains("backup"))
     }

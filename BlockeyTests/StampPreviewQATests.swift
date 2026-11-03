@@ -8,14 +8,14 @@ import SwiftData
 @MainActor
 struct StampPreviewQATests {
 
-    private let calendar: Calendar = {
-        var c = Calendar(identifier: .gregorian)
-        c.timeZone = TimeZone(identifier: "UTC") ?? .gmt
-        return c
-    }()
+    // The machine's calendar identifier pinned to UTC; the day is found from today (issue #6).
+    private let calendar = TestDates.calendar(timeZone: TimeZone(identifier: "UTC") ?? .gmt)
+    private let monday: Date
+
+    init() { monday = TestDates.ordinaryDay(weekday: 2, in: calendar) }
 
     private func at(_ h: Int, _ m: Int = 0, _ s: Int = 0) -> Date {
-        calendar.date(from: DateComponents(year: 2026, month: 10, day: 5, hour: h, minute: m, second: s))!
+        calendar.date(bySettingHour: h, minute: m, second: s, of: monday)!
     }
     private func range(_ h1: Int, _ h2: Int) -> TimeRange { TimeRange(start: at(h1), end: at(h2)) }
 

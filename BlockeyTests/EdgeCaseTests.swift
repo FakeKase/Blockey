@@ -6,24 +6,24 @@ import Foundation
 // cannot see an entire class of bug. These suites deliberately use a zone that
 // does shift, plus the pure edges the first 52 tests do not reach.
 
-private let ny: Calendar = {
-    var c = Calendar(identifier: .gregorian)
-    c.timeZone = TimeZone(identifier: "America/New_York")!
-    return c
-}()
+// Calendars keep the machine's identifier (Buddhist here) and only pin the zone, and the days
+// below are searched forward from today rather than written as literals (issue #6, TestDates).
+private let ny = TestDates.calendar(timeZone: TimeZone(identifier: "America/New_York")!)
 
-private let utc: Calendar = {
-    var c = Calendar(identifier: .gregorian)
-    c.timeZone = TimeZone(identifier: "UTC")!
-    return c
-}()
+private let utc = TestDates.calendar(timeZone: TimeZone(identifier: "UTC")!)
 
-/// 2026-03-08 America/New_York: 02:00 EST jumps to 03:00 EDT. A 23-hour day.
-private let springForward = ny.date(from: DateComponents(year: 2026, month: 3, day: 8))!
-/// 2026-11-01 America/New_York: 02:00 EDT falls back to 01:00 EST. A 25-hour day.
-private let fallBack = ny.date(from: DateComponents(year: 2026, month: 11, day: 1))!
-/// An ordinary day in the same zone, as a control.
-private let plainDay = ny.date(from: DateComponents(year: 2026, month: 9, day: 8))!
+/// The next America/New_York spring-forward day: 02:00 EST jumps to 03:00 EDT. A 23-hour day.
+/// A function that throws, not a global, so a missing transition fails the test instead of
+/// crashing the process. Each DST test starts with `let springForward = try springForwardDay()`.
+private func springForwardDay() throws -> Date {
+    try #require(TestDates.nextSpringForward(in: ny), "no spring-forward day found for New York")
+}
+/// The next America/New_York fall-back day: 02:00 EDT falls back to 01:00 EST. A 25-hour day.
+private func fallBackDay() throws -> Date {
+    try #require(TestDates.nextFallBack(in: ny), "no fall-back day found for New York")
+}
+/// An ordinary day in the same zone, as a control (no DST change the day before, of, or after).
+private let plainDay = TestDates.ordinaryDay(in: ny)
 
 private func hourMinute(_ date: Date, _ calendar: Calendar = ny) -> (hour: Int, minute: Int) {
     let c = calendar.dateComponents([.hour, .minute], from: date)
@@ -44,7 +44,8 @@ struct DaylightSavingTests {
     // --- snap: verified correct, kept as a regression guard -----------------
 
     @Test("snap keeps the grid on wall-clock time across a spring-forward day")
-    func snapSurvivesSpringForward() {
+    func snapSurvivesSpringForward() throws {
+        let springForward = try springForwardDay()
         for minutes in [5, 10, 15, 30] {
             let snapped = DaySchedule.snap(wall(springForward, 9, 7), toMinutes: minutes, calendar: ny)
             let hm = hourMinute(snapped)
@@ -54,7 +55,8 @@ struct DaylightSavingTests {
     }
 
     @Test("snap keeps the grid on wall-clock time across a fall-back day")
-    func snapSurvivesFallBack() {
+    func snapSurvivesFallBack() throws {
+        let fallBack = try fallBackDay()
         for minutes in [5, 10, 15, 30] {
             let snapped = DaySchedule.snap(wall(fallBack, 9, 8), toMinutes: minutes, calendar: ny)
             let hm = hourMinute(snapped)
@@ -64,8 +66,9 @@ struct DaylightSavingTests {
     }
 
     @Test("snap is stable inside the repeated hour of a fall-back day")
-    func snapInsideRepeatedHour() {
-        // 01:30 occurs twice on 1 November; both instants must snap to their own
+    func snapInsideRepeatedHour() throws {
+        let fallBack = try fallBackDay()
+        // 01:30 occurs twice on the fall-back day; both instants must snap to their own
         // 01:30, not collapse onto one another.
         let firstOneThirty = fallBack.addingTimeInterval(1.5 * 3600)   // EDT
         let secondOneThirty = fallBack.addingTimeInterval(2.5 * 3600)  // EST
@@ -83,8 +86,9 @@ struct DaylightSavingTests {
     }
 
     @Test("The window holds its wall-clock hours on a spring-forward day")
-    func windowHoldsOnSpringForward() {
-        // 8 March is only 23 hours long. Adding startMinute * 60 seconds to
+    func windowHoldsOnSpringForward() throws {
+        let springForward = try springForwardDay()
+        // The spring-forward day is only 23 hours long. Adding startMinute * 60 seconds to
         // midnight used to land the window at 08:00–23:00.
         let w = DaySchedule.window(for: springForward, startMinute: 7 * 60, endMinute: 22 * 60, calendar: ny)
         #expect(hourMinute(w.start) == (7, 0))
@@ -92,8 +96,9 @@ struct DaylightSavingTests {
     }
 
     @Test("The window holds its wall-clock hours on a fall-back day")
-    func windowHoldsOnFallBack() {
-        // 1 November is 25 hours long, so the old arithmetic landed an hour early.
+    func windowHoldsOnFallBack() throws {
+        let fallBack = try fallBackDay()
+        // The fall-back day is 25 hours long, so the old arithmetic landed an hour early.
         let w = DaySchedule.window(for: fallBack, startMinute: 7 * 60, endMinute: 22 * 60, calendar: ny)
         #expect(hourMinute(w.start) == (7, 0))
         #expect(hourMinute(w.end) == (22, 0))
@@ -101,6 +106,7 @@ struct DaylightSavingTests {
 
     @Test("A stamped template lands on its requested hour on a DST day")
     func stampingHoldsOnADSTDay() throws {
+        let springForward = try springForwardDay()
         // Exactly the composition TodayView uses: window(for:) feeding stamp().
         let window = DaySchedule.window(for: springForward,
                                         startMinute: 7 * 60,
@@ -147,7 +153,8 @@ struct CalendarMathTests {
     }
 
     @Test("flooredToHour never moves forward, on any hour of a fall-back day")
-    func flooredNeverMovesForward() {
+    func flooredNeverMovesForward() throws {
+        let fallBack = try fallBackDay()
         // 25 hours, sampled every 10 minutes.
         for step in 0...(25 * 6) {
             let d = fallBack.addingTimeInterval(TimeInterval(step * 600))
@@ -168,8 +175,9 @@ struct CalendarMathTests {
     }
 
     @Test("ceiledToHour never returns a time before its argument, even in a repeated hour")
-    func ceilingHoldsInsideTheRepeatedHour() {
-        // 01:30 EST — the *second* 01:30 on 1 November. `flooredToHour` rebuilds
+    func ceilingHoldsInsideTheRepeatedHour() throws {
+        let fallBack = try fallBackDay()
+        // 01:30 EST — the *second* 01:30 on the fall-back day. `flooredToHour` rebuilds
         // from (y, m, d, hour) and resolves the ambiguous 01:00 to the first
         // occurrence, so a single +3600 used to land before the input.
         let secondOneThirty = fallBack.addingTimeInterval(2.5 * 3600)

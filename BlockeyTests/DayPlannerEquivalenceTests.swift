@@ -10,8 +10,11 @@ import SwiftData
 struct DayPlannerEquivalenceTests {
     private let calendar = Calendar.current
 
+    /// A Monday far from any DST change, found from today in this machine's calendar (issue #6).
+    private let monday = TestDates.ordinaryDay(weekday: 2)
+
     private func at(_ hour: Int, _ minute: Int = 0) -> Date {
-        calendar.date(from: DateComponents(year: 2026, month: 10, day: 5, hour: hour, minute: minute))!
+        calendar.date(bySettingHour: hour, minute: minute, second: 0, of: monday)!
     }
     private func range(_ h1: Int, _ h2: Int) -> TimeRange { TimeRange(start: at(h1), end: at(h2)) }
 
