@@ -44,6 +44,14 @@ enum DemoScenario {
         ProcessInfo.processInfo.arguments.contains("-blockeyInbox")
     }
 
+    /// `-blockeyComposerText <text>` pre-fills the inbox composer, so suggestions can be
+    /// screenshotted without a keyboard.
+    static var composerText: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-blockeyComposerText"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+
     /// `-blockeyHoldBanner` stops the banner timer, so a screenshot can catch it.
     static var holdsBanner: Bool {
         ProcessInfo.processInfo.arguments.contains("-blockeyHoldBanner")
