@@ -85,6 +85,13 @@ struct ClearResult: Equatable {
     /// Ids of the inbox tasks the clear inserted, one per removed block that had a source task.
     let insertedTaskIDs: [UUID]
 
+    /// Own blocks the clear left in place because Blockey cannot edit them (recurring or
+    /// multi-day). Undo could not restore a recurrence rule, so they are skipped rather than
+    /// deleted. The confirmation dialog (tasks 2.3/2.4) should name this count. It is counted
+    /// from `contents`, which hides declined and cancelled events, so such an event that is
+    /// also recurring or multi-day is kept but not counted. Rare in Blockey's own calendar.
+    let kept: Int
+
     var returned: Int { insertedTaskIDs.count }
     var lost: Int { removed.filter { $0.token == nil }.count }
 
@@ -129,6 +136,14 @@ struct StampResult: Equatable {
         if lost > 0 { text += " \u{00B7} \(lost) lost" }
         return PlanMessage(text: text, isWarning: toInbox > 0 || lost > 0)
     }
+}
+
+/// What confirming a stamp preview did.
+enum StampOutcome: Equatable {
+    case written(StampResult)
+    /// The day no longer matches what was previewed. Nothing was written; this is the plan
+    /// as it stands now.
+    case stale(StampPreview)
 }
 
 /// What filling the day did.
@@ -188,16 +203,71 @@ struct DayPlanner {
 
     // MARK: Stamp
 
-    /// Stamps `template` around what is already on the day.
+    /// What stamping `template` would do right now, without writing anything.
     ///
-    /// `busy` is the day's current commitments, as the caller last fetched them.
+    /// `nil` (no template assigned) previews as an empty template.
+    func preview(_ template: StampTemplate?,
+                 inputs: DayPlanInputs,
+                 mode: StampPreview.Mode) -> StampPreview {
+        let contents = writer.contents(for: inputs.date,
+                                       ignoring: inputs.hiddenCalendarIDs,
+                                       calendar: inputs.calendar)
+        return preview(template, inputs: inputs, mode: mode, contents: contents)
+    }
+
+    private func preview(_ template: StampTemplate?,
+                         inputs: DayPlanInputs,
+                         mode: StampPreview.Mode,
+                         contents: DayContents) -> StampPreview {
+        // The same floor `stamp` uses, so a preview and the write it leads to cannot disagree
+        // about what has already gone.
+        StampPreview.make(items: template?.items ?? [],
+                          on: inputs.date,
+                          mode: mode,
+                          fixed: contents.fixed.map(\.range),
+                          ownEditable: contents.blocks.filter(\.isEditable).map(\.range),
+                          ownLocked: contents.blocks.filter { !$0.isEditable }.map(\.range),
+                          window: inputs.window,
+                          notBefore: inputs.isToday ? inputs.now : nil,
+                          calendar: inputs.calendar)
+    }
+
+    /// Stamps `template` around what is already on the day, fetching the day fresh.
     @discardableResult
     func stamp(_ template: StampTemplate,
                inputs: DayPlanInputs,
-               busy: [TimeRange],
                openTasks: [TaskItem]) -> StampResult {
-        stamp(template, inputs: inputs, busy: busy,
-              nextInboxSortIndex: Self.nextInboxSortIndex(openTasks), cleared: nil)
+        let busy = writer.contents(for: inputs.date,
+                                   ignoring: inputs.hiddenCalendarIDs,
+                                   calendar: inputs.calendar).busy
+        return stamp(template, inputs: inputs, busy: busy,
+                     nextInboxSortIndex: Self.nextInboxSortIndex(openTasks), cleared: nil)
+    }
+
+    /// Confirms a preview: recomputes against a fresh fetch and the current `inputs.now`, and
+    /// writes only if the result is the one the user was shown.
+    ///
+    /// Otherwise returns the fresh preview and writes nothing, for the sheet to show again.
+    /// The user agreed to a plan, not to whatever the calendar looks like a minute later.
+    /// Throws, having changed nothing, if Start over cannot clear the day.
+    func stamp(_ template: StampTemplate,
+               expecting expected: StampPreview,
+               mode: StampPreview.Mode,
+               inputs: DayPlanInputs,
+               openTasks: [TaskItem]) throws -> StampOutcome {
+        let contents = writer.contents(for: inputs.date,
+                                       ignoring: inputs.hiddenCalendarIDs,
+                                       calendar: inputs.calendar)
+        let fresh = preview(template, inputs: inputs, mode: mode, contents: contents)
+        guard fresh == expected else { return .stale(fresh) }
+
+        switch mode {
+        case .keep:
+            return .written(stamp(template, inputs: inputs, busy: contents.busy,
+                                  nextInboxSortIndex: Self.nextInboxSortIndex(openTasks), cleared: nil))
+        case .startOver:
+            return .written(try replace(with: template, inputs: inputs, openTasks: openTasks))
+        }
     }
 
     /// Clears the day, then stamps into the emptied day.
@@ -236,6 +306,10 @@ struct DayPlanner {
 
         var created: [Block] = []
         var failures: [TemplateStamper.Item] = []
+        // A zero-length row is not a task anyone can do, and the preview does not list it.
+        let unplaced = result.placements
+            .filter { $0.outcome == .unplaced(.noGapFitsInDayWindow) }
+            .map(\.item)
 
         for (item, range) in result.scheduled {
             do {
@@ -256,7 +330,7 @@ struct DayPlanner {
         // inbox task rather than vanishing.
         var index = nextInboxSortIndex
         var insertedIDs: [UUID] = []
-        for item in result.unplaced + failures {
+        for item in unplaced + failures {
             let task = TaskItem(title: item.title,
                                 estimatedMinutes: item.durationMinutes,
                                 categoryRaw: template.slug(forRowID: item.id),
@@ -269,7 +343,7 @@ struct DayPlanner {
 
         return StampResult(created: created,
                            failures: failures,
-                           unplaced: result.unplaced,
+                           unplaced: unplaced,
                            movedCount: result.movedCount,
                            insertedTaskIDs: insertedIDs,
                            cleared: cleared)
@@ -286,6 +360,11 @@ struct DayPlanner {
     /// Throws, having changed nothing, if the calendar could not delete.
     @discardableResult
     func clear(inputs: DayPlanInputs, openTasks: [TaskItem]) throws -> ClearResult {
+        // Counted before the delete, from the same fetch the preview uses. The kept events
+        // are exactly the own, non-all-day blocks the clear will not touch.
+        let kept = writer.contents(for: inputs.date,
+                                   ignoring: inputs.hiddenCalendarIDs,
+                                   calendar: inputs.calendar).blocks.filter { !$0.isEditable }.count
         let removed = try writer.deleteAllBlocks(on: inputs.date, calendar: inputs.calendar)
         var index = Self.nextInboxSortIndex(openTasks)
         var insertedIDs: [UUID] = []
@@ -298,15 +377,17 @@ struct DayPlanner {
             insertedIDs.append(task.id)
             index -= 1
         }
-        return ClearResult(removed: removed, insertedTaskIDs: insertedIDs)
+        return ClearResult(removed: removed, insertedTaskIDs: insertedIDs, kept: kept)
     }
 
     // MARK: Fill
 
     /// Places every open task that fits, first-fit, and deletes each one it places.
     @discardableResult
-    func fillDay(inputs: DayPlanInputs, busy: [TimeRange], openTasks: [TaskItem]) -> FillResult {
-        var busy = busy
+    func fillDay(inputs: DayPlanInputs, openTasks: [TaskItem]) -> FillResult {
+        var busy = writer.contents(for: inputs.date,
+                                   ignoring: inputs.hiddenCalendarIDs,
+                                   calendar: inputs.calendar).busy
         var created: [Block] = []
         var deleted: [TaskSnapshot] = []
         var failed = 0

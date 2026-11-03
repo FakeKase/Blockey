@@ -305,8 +305,17 @@ final class CalendarService {
         // All-day events in this calendar are not blocks — nothing else in the
         // app treats them as one, they consume no time, and the signing reminder
         // is one of them. Clearing the day leaves them alone.
-        let events = store.events(matching: predicate).filter { !$0.isAllDay }
-        let removed = events.map { Block(event: $0, blockeyCalendarID: blockeyCalendar.calendarIdentifier) }
+        //
+        // Events Blockey cannot edit (recurring, multi-day) are left alone too: `delete`
+        // refuses them, and Undo could not restore a recurrence rule. Judged by `Block`'s
+        // own `isEditable` so the rule lives in one place.
+        let ourID = blockeyCalendar.calendarIdentifier
+        let doomed = store.events(matching: predicate)
+            .filter { !$0.isAllDay }
+            .map { (event: $0, block: Block(event: $0, blockeyCalendarID: ourID)) }
+            .filter { $0.block.isEditable }
+        let events = doomed.map(\.event)
+        let removed = doomed.map(\.block)
 
         do {
             for event in events {

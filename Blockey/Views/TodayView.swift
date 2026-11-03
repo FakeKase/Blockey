@@ -573,7 +573,7 @@ struct TodayView: View {
     }
 
     private func fillDay() {
-        let result = planner.fillDay(inputs: planInputs, busy: contents.busy, openTasks: openTasks)
+        let result = planner.fillDay(inputs: planInputs, openTasks: openTasks)
         reload()
         showPlan(result.message)
     }
@@ -657,7 +657,6 @@ struct TodayView: View {
         guard let template = templateForToday else { return }
         let result = planner.stamp(StampTemplate(template),
                                    inputs: planInputs,
-                                   busy: contents.busy,
                                    openTasks: openTasks)
         reload()
         showPlan(result.message)

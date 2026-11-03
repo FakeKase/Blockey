@@ -75,7 +75,7 @@ struct DayPlannerTests {
     func stampEmptyDay() throws {
         let rig = try makeRig()
         let t = template([("Deep", 9 * 60, 120, "deep"), ("Lunch", 12 * 60, 60, "rest")])
-        let result = rig.planner.stamp(t, inputs: inputs(), busy: [], openTasks: [])
+        let result = rig.planner.stamp(t, inputs: inputs(), openTasks: [])
 
         #expect(result.created.map(\.range) == [range(9, 11), range(12, 13)])
         #expect(result.movedCount == 0)
@@ -91,7 +91,7 @@ struct DayPlannerTests {
         let meeting = range(9, 10)
         rig.writer.addFixed("Standup", meeting)
         let t = template([("Deep", 9 * 60, 60, "deep")])
-        let result = rig.planner.stamp(t, inputs: inputs(), busy: rig.writer.contents(for: day(), ignoring: [], calendar: calendar).busy, openTasks: [])
+        let result = rig.planner.stamp(t, inputs: inputs(), openTasks: [])
 
         #expect(result.created.count == 1)
         #expect(result.movedCount == 1)
@@ -104,12 +104,12 @@ struct DayPlannerTests {
     func stampUnplacedGoesToInbox() throws {
         let rig = try makeRig()
         // Everything from 7 to 22 is taken.
-        let busy = [range(7, 22)]
+        rig.writer.addFixed("All day busy", range(7, 22))
         let t = template([("First", 9 * 60, 60, "rest"), ("Second", 10 * 60, 30, "telepathy")])
         let existing = TaskItem(title: "Old", sortIndex: 4)
         rig.context.insert(existing)
 
-        let result = rig.planner.stamp(t, inputs: inputs(), busy: busy, openTasks: [existing])
+        let result = rig.planner.stamp(t, inputs: inputs(), openTasks: [existing])
 
         #expect(result.created.isEmpty)
         #expect(result.unplaced.count == 2)
@@ -130,7 +130,7 @@ struct DayPlannerTests {
         let rig = try makeRig()
         rig.writer.failCreateAtCalls = [0]
         let t = template([("A", 9 * 60, 60, "deep"), ("B", 11 * 60, 60, "rest")])
-        let result = rig.planner.stamp(t, inputs: inputs(), busy: [], openTasks: [])
+        let result = rig.planner.stamp(t, inputs: inputs(), openTasks: [])
 
         #expect(result.created.map(\.title) == ["B"])
         #expect(result.failures.map(\.title) == ["A"])
@@ -148,7 +148,7 @@ struct DayPlannerTests {
         rig.writer.failCreateAtCalls = [0]
         // "Fail" is placed then fails to write; "Huge" cannot fit anywhere.
         let t = template([("Fail", 9 * 60, 60, "deep"), ("Huge", 10 * 60, 20 * 60, "rest")])
-        let result = rig.planner.stamp(t, inputs: inputs(), busy: [], openTasks: [])
+        let result = rig.planner.stamp(t, inputs: inputs(), openTasks: [])
         #expect(result.unplaced.map(\.title) == ["Huge"])
         #expect(result.failures.map(\.title) == ["Fail"])
         // Inserted in that order, with a descending index.
@@ -161,8 +161,8 @@ struct DayPlannerTests {
     func stampAlarm() throws {
         let rig = try makeRig()
         let t = template([("A", 9 * 60, 60, "deep")])
-        rig.planner.stamp(t, inputs: inputs(alarm: 10), busy: [], openTasks: [])
-        rig.planner.stamp(t, inputs: inputs(alarm: nil), busy: [], openTasks: [])
+        rig.planner.stamp(t, inputs: inputs(alarm: 10), openTasks: [])
+        rig.planner.stamp(t, inputs: inputs(alarm: nil), openTasks: [])
         #expect(rig.writer.created.map(\.alarm) == [10, nil])
     }
 
@@ -172,12 +172,12 @@ struct DayPlannerTests {
         let now = at(11)
 
         let today = try makeRig()
-        let r1 = today.planner.stamp(t, inputs: inputs(now: now, isToday: true), busy: [], openTasks: [])
+        let r1 = today.planner.stamp(t, inputs: inputs(now: now, isToday: true), openTasks: [])
         #expect(r1.created.allSatisfy { $0.range.start >= now })
         #expect(r1.movedCount == 1)
 
         let other = try makeRig()
-        let r2 = other.planner.stamp(t, inputs: inputs(now: now, isToday: false), busy: [], openTasks: [])
+        let r2 = other.planner.stamp(t, inputs: inputs(now: now, isToday: false), openTasks: [])
         #expect(r2.created.map(\.range) == [range(9, 10)])
         #expect(r2.movedCount == 0)
     }
@@ -187,19 +187,17 @@ struct DayPlannerTests {
         let rig = try makeRig()
         let fixed = [range(9, 10), range(10, 30, 11, 0), range(13, 15)]
         for (i, r) in fixed.enumerated() { rig.writer.addFixed("M\(i)", r) }
-        let busy = rig.writer.contents(for: day(), ignoring: [], calendar: calendar).busy
         let t = template([("A", 9 * 60, 60, "deep"), ("B", 10 * 60, 60, "deep"),
                           ("C", 13 * 60, 90, "deep"), ("D", 14 * 60, 60, "deep")])
 
-        let stamped = rig.planner.stamp(t, inputs: inputs(), busy: busy, openTasks: [])
+        let stamped = rig.planner.stamp(t, inputs: inputs(), openTasks: [])
         for block in stamped.created {
             for f in fixed { #expect(!block.range.overlaps(f), "\(block.title) overlaps a fixed event") }
         }
 
         let tasks = (0..<4).map { TaskItem(title: "T\($0)", estimatedMinutes: 60, sortIndex: $0) }
         tasks.forEach(rig.context.insert)
-        let allBusy = rig.writer.contents(for: day(), ignoring: [], calendar: calendar).busy
-        let filled = rig.planner.fillDay(inputs: inputs(), busy: allBusy, openTasks: tasks)
+        let filled = rig.planner.fillDay(inputs: inputs(), openTasks: tasks)
         for block in filled.created {
             for f in fixed { #expect(!block.range.overlaps(f)) }
         }
@@ -308,9 +306,8 @@ struct DayPlannerTests {
         let b = TaskItem(title: "B", estimatedMinutes: 30, categoryRaw: "deep", sortIndex: 1)
         [a, b].forEach(rig.context.insert)
         let idA = a.id, idB = b.id
-        let busy = rig.writer.contents(for: day(), ignoring: [], calendar: calendar).busy
 
-        let result = rig.planner.fillDay(inputs: inputs(), busy: busy, openTasks: [a, b])
+        let result = rig.planner.fillDay(inputs: inputs(), openTasks: [a, b])
 
         #expect(result.created.map(\.range) == [range(8, 9), range(9, 0, 9, 30)])
         #expect(rig.writer.created.map(\.slug) == ["rest", "deep"])
@@ -328,7 +325,7 @@ struct DayPlannerTests {
         let b = TaskItem(title: "B", estimatedMinutes: 30, sortIndex: 1)
         [a, b].forEach(rig.context.insert)
 
-        let result = rig.planner.fillDay(inputs: inputs(), busy: [], openTasks: [a, b])
+        let result = rig.planner.fillDay(inputs: inputs(), openTasks: [a, b])
 
         #expect(result.failed == 1)
         #expect(result.placed == 1)
@@ -344,7 +341,8 @@ struct DayPlannerTests {
         let rig = try makeRig()
         let t = TaskItem(title: "Big", estimatedMinutes: 60, sortIndex: 0)
         rig.context.insert(t)
-        let result = rig.planner.fillDay(inputs: inputs(), busy: [range(7, 22)], openTasks: [t])
+        rig.writer.addFixed("All day busy", range(7, 22))
+        let result = rig.planner.fillDay(inputs: inputs(), openTasks: [t])
         #expect(result.placed == 0)
         #expect(result.message == PlanMessage(text: "Nothing fits in the time you have left", isWarning: true))
         #expect(try inbox(rig.context).count == 1)
@@ -352,7 +350,7 @@ struct DayPlannerTests {
         let rig2 = try makeRig()
         let one = TaskItem(title: "One", estimatedMinutes: 30, sortIndex: 0)
         rig2.context.insert(one)
-        #expect(rig2.planner.fillDay(inputs: inputs(), busy: [], openTasks: [one]).message
+        #expect(rig2.planner.fillDay(inputs: inputs(), openTasks: [one]).message
                 == PlanMessage(text: "Placed 1 task"))
     }
 
@@ -361,7 +359,7 @@ struct DayPlannerTests {
         let rig = try makeRig()
         let t = TaskItem(title: "T", estimatedMinutes: 30, sortIndex: 0)
         rig.context.insert(t)
-        let result = rig.planner.fillDay(inputs: inputs(now: at(15), isToday: true), busy: [], openTasks: [t])
+        let result = rig.planner.fillDay(inputs: inputs(now: at(15), isToday: true), openTasks: [t])
         #expect(result.created[0].range.start == at(15))
     }
 
@@ -441,12 +439,12 @@ struct DayPlannerTests {
     func resultsCarryUndoData() throws {
         let rig = try makeRig()
         let t = template([("A", 9 * 60, 60, "deep")])
-        let stamped = rig.planner.stamp(t, inputs: inputs(), busy: [], openTasks: [])
+        let stamped = rig.planner.stamp(t, inputs: inputs(), openTasks: [])
         #expect(stamped.created.compactMap { $0.token?.id }.count == 1)
 
         let task = TaskItem(title: "T", estimatedMinutes: 30, categoryRaw: "rest", sortIndex: 7)
         rig.context.insert(task)
-        let filled = rig.planner.fillDay(inputs: inputs(), busy: stamped.created.map(\.range), openTasks: [task])
+        let filled = rig.planner.fillDay(inputs: inputs(), openTasks: [task])
         #expect(filled.deletedTasks == [TaskSnapshot(id: task.id, title: "T", estimatedMinutes: 30,
                                                      categoryRaw: "rest", sortIndex: 7,
                                                      createdAt: filled.deletedTasks[0].createdAt,
