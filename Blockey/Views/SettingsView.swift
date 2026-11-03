@@ -20,8 +20,16 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.alarmMinutesBefore) private var alarmMinutesBefore = 5
     @AppStorage(SettingsKey.skipPlanPreview) private var skipPlanPreview = false
 
+    @Query private var activityDays: [ActivityDay]
+
     private var hiddenIDs: Set<String> {
         Set(hiddenCalendarsRaw.split(separator: "\n").map(String.init))
+    }
+
+    /// Re-read when a day is added (the query changes), so the row is live while Settings is open.
+    private var bestStreak: Int {
+        _ = activityDays.count
+        return StreakStore(context: context, calendar: .current).summary(now: .now).longest
     }
 
     var body: some View {
@@ -58,7 +66,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Alerts")
                 } footer: {
-                    Text("Alerts are set on the calendar event itself, so they fire through Calendar, so no extra notification permission needed.")
+                    Text("Alerts are set on the calendar event itself, so they fire through Calendar and need no extra notification permission.")
                 }
 
                 Section {
@@ -76,6 +84,16 @@ struct SettingsView: View {
                     Text("Plan around these calendars")
                 } footer: {
                     Text("Turn one off and its events stop blocking out time.")
+                }
+
+                Section {
+                    LabeledContent("Streak") {
+                        Text(StreakCopy.best(bestStreak))
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                } footer: {
+                    Text(StreakCopy.settingsFooter)
                 }
 
                 Section {

@@ -27,7 +27,7 @@ struct UndoEdgeCaseTests {
 
     private func makeRig() throws -> (writer: FakeBlockWriter, context: ModelContext, planner: DayPlanner) {
         let container = try ModelContainer(
-            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self,
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let context = ModelContext(container)
         let writer = FakeBlockWriter()

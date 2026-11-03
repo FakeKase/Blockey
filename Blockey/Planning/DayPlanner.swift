@@ -409,6 +409,10 @@ struct ReturnResult: Equatable {
 struct DayPlanner {
     let writer: any BlockWriting
     let context: ModelContext
+    /// The real moment of an add, for the streak only. `inputs.now` is the view's 30-second
+    /// ticking state, used for planning; just after midnight it can still name yesterday, and
+    /// the add would be counted on the wrong day.
+    var clock: () -> Date = { .now }
 
     // MARK: Stamp
 
@@ -563,6 +567,8 @@ struct DayPlanner {
             index -= 1
         }
 
+        recordActivity(ifWritten: created.count, inputs: inputs)
+
         return StampResult(created: created,
                            failures: failures,
                            unplaced: unplaced,
@@ -635,6 +641,8 @@ struct DayPlanner {
             }
         }
 
+        recordActivity(ifWritten: placements.count, inputs: inputs)
+
         return FillResult(placements: placements,
                           failed: failed,
                           undo: UndoRecord(inputs: inputs,
@@ -657,7 +665,31 @@ struct DayPlanner {
         // and a block representing the same thing at once.
         let snapshot = TaskSnapshot(task)
         context.delete(task)
+        recordActivity(ifWritten: 1, inputs: inputs)
         return PlaceResult(created: block, deletedTask: snapshot)
+    }
+
+    /// The `+` New block button: one block, written and counted here so every add path records
+    /// the day in the same place. Throws, having recorded nothing, if the calendar refuses.
+    @discardableResult
+    func addBlock(title: String, range: TimeRange, categorySlug: String?,
+                  inputs: DayPlanInputs) throws -> Block {
+        let block = try writer.createBlock(title: title,
+                                           range: range,
+                                           categorySlug: categorySlug,
+                                           sourceTaskID: nil,
+                                           alarmMinutesBefore: inputs.alarmMinutesBefore)
+        recordActivity(ifWritten: 1, inputs: inputs)
+        return block
+    }
+
+    /// Counts today toward the streak (issue #7), but only when a block was actually written.
+    /// Called from every add path and from no removal path: Undo, Clear and delete never take a
+    /// day back, since the day counts once the add happened. The day is `clock()`, the moment of the add, which
+    /// differs from the day being planned and from the possibly stale `inputs.now`.
+    private func recordActivity(ifWritten count: Int, inputs: DayPlanInputs) {
+        guard count > 0 else { return }
+        StreakStore(context: context, calendar: inputs.calendar).record(now: clock())
     }
 
     /// Turns a block back into an inbox task. Throws, inserting nothing, if the delete fails.

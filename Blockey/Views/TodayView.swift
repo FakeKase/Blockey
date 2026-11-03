@@ -23,6 +23,7 @@ struct TodayView: View {
     @AppStorage(SettingsKey.hasSeenStarterTemplatesNote) private var hasSeenStarterNote = false
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverRunning
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var selectedDate = Date()
     @State private var contents = DayContents()
@@ -37,6 +38,8 @@ struct TodayView: View {
     /// The preview the plan sheet opens with.
     @State private var planDraft: StampPreview?
     @State private var now = Date()
+    /// Nil until first computed, so the first load is never announced (issue #7).
+    @State private var streak: StreakSummary?
     @State private var isConfirmingClear = false
 
     private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -271,6 +274,7 @@ struct TodayView: View {
                 try? await _Concurrency.Task.sleep(for: .milliseconds(600))
                 demoOpenPlanSheet()
             }
+            if DemoScenario.wantsSettings { sheet = .settings }
             if DemoScenario.wantsInbox {
                 inboxDetent = .medium
                 sheet = .inbox
@@ -295,10 +299,61 @@ struct TodayView: View {
             if DemoScenario.overrideNow != nil { return }
             #endif
             now = tick
+            refreshStreak()
         }
     }
 
     // MARK: Header
+
+    /// "Today" with the streak beside it, on today only. At accessibility sizes the streak drops
+    /// to its own line, the way the summary line already wraps.
+    @ViewBuilder
+    private var titleLine: some View {
+        let title = Text(isToday ? "Today" : selectedDate.formatted(.dateTime.weekday(.wide)))
+            .font(.headline)
+        if isToday, let badge = streak.flatMap(StreakCopy.badge(for:)) {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 1) { title; streakLabel(badge) }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) { title; streakLabel(badge) }
+            }
+        } else {
+            title
+        }
+    }
+
+    /// Not a button. Colour is never the only signal: the symbol and the words differ by state.
+    private func streakLabel(_ badge: StreakCopy.Badge) -> some View {
+        let isActive: Bool = { if case .active = badge { return true } else { return false } }()
+        return Label {
+            Text(badge.text)
+                .foregroundStyle(isActive ? .primary : .secondary)
+        } icon: {
+            Image(systemName: isActive ? "flame.fill" : "flame")
+                .foregroundStyle(isActive ? Color.orange : Color.secondary)
+        }
+        .font(.caption.weight(.medium))
+        .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+        .fixedSize(horizontal: false, vertical: true)
+        .contentTransition(.opacity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(badge.accessibility)
+    }
+
+    /// Recomputed wherever it can change: reload (every add path calls it), and the day tick.
+    private func refreshStreak() {
+        let old = streak
+        let new = StreakStore(context: context, calendar: calendar).summary(now: now)
+        guard new != old else { return }
+        if reduceMotion {
+            streak = new
+        } else {
+            withAnimation(.easeInOut(duration: 0.25)) { streak = new }
+        }
+        if voiceOverRunning, StreakCopy.shouldAnnounce(from: old, to: new) {
+            AccessibilityNotification.Announcement(StreakCopy.incrementAnnouncement(new.current)).post()
+        }
+    }
 
     private var dayHeader: some View {
         VStack(spacing: 0) {
@@ -312,8 +367,7 @@ struct TodayView: View {
                 .accessibilityLabel("Previous day")
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(isToday ? "Today" : selectedDate.formatted(.dateTime.weekday(.wide)))
-                        .font(.headline)
+                    titleLine
                     Text(summaryLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -596,7 +650,16 @@ struct TodayView: View {
     }
 
     private func reload() {
+        seedStreakIfNeeded()
         contents = calendars.contents(for: selectedDate, ignoring: hiddenCalendarIDs, calendar: calendar)
+        refreshStreak()
+    }
+
+    /// One-time, flag-guarded: counts the days Blockey events were already created on (issue #7).
+    /// Cheap after the first success. Retried while calendar access is not granted yet.
+    private func seedStreakIfNeeded() {
+        StreakStore(context: context, calendar: calendar)
+            .seedIfNeeded(now: .now) { calendars.blockCreationDates(since: $0, calendar: calendar) }
     }
 
     private func disarm() {
@@ -672,10 +735,11 @@ struct TodayView: View {
         let fallback = DaySchedule.snap(isToday ? now : window.start, toMinutes: snapMinutes, calendar: calendar)
         let start = DaySchedule.firstFit(duration: length, in: gaps)?.start ?? fallback
         do {
-            let block = try calendars.createBlock(title: DefaultTitles.newBlock,
-                                                  range: TimeRange(start: start, duration: length),
-                                                  category: .deepWork,
-                                                  alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
+            // Through the planner so the day is counted toward the streak (issue #7).
+            let block = try planner.addBlock(title: DefaultTitles.newBlock,
+                                             range: TimeRange(start: start, duration: length),
+                                             categorySlug: BlockCategory.deepWork.rawValue,
+                                             inputs: planInputs)
             reload()
             selectedBlock = block
         } catch {

@@ -39,6 +39,11 @@ enum DemoScenario {
         ProcessInfo.processInfo.arguments.contains("-blockeyStartOver")
     }
 
+    /// `-blockeySettings` opens the Settings sheet.
+    static var wantsSettings: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeySettings")
+    }
+
     /// `-blockeyInbox` opens the inbox tray at its medium height.
     static var wantsInbox: Bool {
         ProcessInfo.processInfo.arguments.contains("-blockeyInbox")
@@ -159,6 +164,21 @@ enum DemoScenario {
         try? report.joined(separator: "\n").write(to: path, atomically: true, encoding: .utf8)
     }
 
+    /// Activity days for the streak UI: a run of 5 ending yesterday (so today reads "at risk"
+    /// until something is added) and an older run of 8 as the longest. Merges, so repeat runs
+    /// do not stack. Honours `-blockeyNow` through `date`.
+    @MainActor
+    static func seedDemoStreak(context: ModelContext, now: Date) {
+        // The demo's own seeded events were created just now, so the one-time history seed would
+        // count today and the at-risk state could never show. Mark it done; the days below stand in.
+        UserDefaults.standard.set(true, forKey: SettingsKey.hasSeededStreak)
+        let calendar = Calendar.current
+        let today = CivilDay(now, in: calendar)
+        let offsets = Array(-5 ... -1) + Array(-14 ... -7)
+        StreakStore(context: context, calendar: calendar)
+            .merge(offsets.map { today.adding(days: $0) }, recordedAt: now)
+    }
+
     @MainActor
     static func apply(calendars: CalendarService, context: ModelContext, on date: Date) {
         // Blocks live in the calendar and survive app reinstalls, so a repeat
@@ -166,6 +186,7 @@ enum DemoScenario {
         _ = try? calendars.deleteAllBlocks(on: date)
         calendars.seedDemoMeetings(on: date)
         calendars.seedDemoHistory(now: date)
+        seedDemoStreak(context: context, now: date)
         if wantsUndoExercise { exerciseUndo(calendars: calendars, context: context, on: date) }
 
         if wantsEvening {

@@ -31,7 +31,7 @@ struct DayPlannerTests {
 
     private func makeContext() throws -> ModelContext {
         let container = try ModelContainer(
-            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self,
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         return ModelContext(container)
     }
@@ -469,7 +469,7 @@ struct StampMessageTests {
 
     private func makeContext() throws -> ModelContext {
         let container = try ModelContainer(
-            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self,
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         return ModelContext(container)
     }

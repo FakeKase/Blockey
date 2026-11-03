@@ -236,6 +236,26 @@ final class CalendarService {
         return BlockHistory.samples(from: facts, windowStart: start, now: now, limit: limit)
     }
 
+    /// When each block in the Blockey calendar was created, for the one-time streak seed (issue #7).
+    /// Nil if calendar access is not granted yet or the Blockey calendar cannot be found, so the
+    /// caller tries again later: right after a reinstall iCloud may not have synced the calendar
+    /// down yet, and treating that as "no history" would end seeding for good.
+    ///
+    /// EventKit can only be asked for events by the dates they happen on, not by when they were
+    /// made, so this asks for everything from `since` to a year ahead (a block planned weeks in
+    /// advance was still added on the day it was made) and keeps the creation dates. The signing
+    /// reminder is skipped: the app writes it itself, so it is not the user adding anything.
+    /// The mapping from dates to days is `StreakSeed`, which is tested without EventKit.
+    func blockCreationDates(since: Date, now: Date = .now, calendar: Calendar = .current) -> [Date]? {
+        guard access.isGranted else { return nil }
+        guard let ours = blockeyCalendar(),
+              let end = calendar.date(byAdding: .year, value: 1, to: now) else { return nil }
+        let predicate = store.predicateForEvents(withStart: since, end: end, calendars: [ours])
+        return store.events(matching: predicate)
+            .filter { !SigningReminder.isReminder(title: $0.title, isAllDay: $0.isAllDay, url: $0.url) }
+            .compactMap(\.creationDate)
+    }
+
     // MARK: - Writing
 
     @discardableResult

@@ -28,7 +28,7 @@ struct StampPreviewQATests {
 
     private func rig() throws -> (FakeBlockWriter, DayPlanner, ModelContext) {
         let container = try ModelContainer(
-            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self,
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let ctx = ModelContext(container)
         let w = FakeBlockWriter()

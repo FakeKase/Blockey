@@ -18,6 +18,11 @@ struct BlockeyBackup: Codable {
     var tasks: [Task] = []
     var templates: [Template] = []
     var assignments: [Assignment] = []
+    /// Days with an add, as Gregorian `yyyy-MM-dd` keys (issue #7). Optional and additive, so a
+    /// backup written before the streak existed still decodes and `version` stays 1. Restore
+    /// merges these in rather than replacing: a streak is history, and a stale backup must not
+    /// shorten the one on the phone.
+    var activityDays: [String]?
 
     struct Task: Codable {
         var title: String
@@ -81,12 +86,15 @@ struct BlockeyBackup: Codable {
         let assignments = try context.fetch(FetchDescriptor<TemplateAssignment>())
         backup.assignments = assignments.map { Assignment(weekday: $0.weekday, templateID: $0.templateID) }
 
+        let activity = try context.fetch(FetchDescriptor<ActivityDay>())
+        backup.activityDays = activity.map(\.key).sorted()
+
         return backup
     }
 
     // MARK: Restore
 
-    /// Replaces everything currently stored.
+    /// Replaces everything currently stored, except streak days, which are merged.
     ///
     /// Replace rather than merge, deliberately: merging would silently
     /// duplicate every template on a second import, and "restore my backup"
@@ -123,6 +131,15 @@ struct BlockeyBackup: Codable {
 
         for assignment in assignments {
             context.insert(TemplateAssignment(weekday: assignment.weekday, templateID: assignment.templateID))
+        }
+
+        // Merge, never replace, and ignore a key that is not a real day. Unlike everything above,
+        // streak days are not "the state in the file": losing one to an older backup is a loss.
+        let existingDays = Set(try context.fetch(FetchDescriptor<ActivityDay>()).map(\.key))
+        // The parsed day's canonical key is stored, never the raw string.
+        let incoming = Set((activityDays ?? []).compactMap { CivilDay(key: $0)?.key })
+        for key in incoming where !existingDays.contains(key) {
+            context.insert(ActivityDay(key: key, recordedAt: exportedAt))
         }
 
         do {

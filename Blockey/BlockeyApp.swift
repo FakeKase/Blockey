@@ -14,7 +14,8 @@ struct BlockeyApp: App {
             TaskItem.self,
             DayTemplate.self,
             TemplateRow.self,
-            TemplateAssignment.self
+            TemplateAssignment.self,
+            ActivityDay.self
         ])
     }
 }
@@ -35,6 +36,9 @@ enum SettingsKey {
     /// Set once the first-launch card has been answered. Never reset. Not backed up either, so
     /// a delete and reinstall shows the card again, which is harmless.
     static let hasSeenStarterTemplatesNote = "hasSeenStarterTemplatesNote"
+    /// Set once the streak has been seeded from existing Blockey events (issue #7). Never reset.
+    /// Not backed up (gap 6): a reinstall re-seeds, which merges and so is harmless.
+    static let hasSeededStreak = "hasSeededStreakHistory"
 
     static let defaultDayStart = 7 * 60
     static let defaultDayEnd = 22 * 60

@@ -20,7 +20,7 @@ struct DayPlannerEquivalenceTests {
 
     private func rig() throws -> (FakeBlockWriter, ModelContext, DayPlanner) {
         let container = try ModelContainer(
-            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self,
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let context = ModelContext(container)
         let writer = FakeBlockWriter()
