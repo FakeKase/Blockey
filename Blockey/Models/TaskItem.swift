@@ -46,6 +46,31 @@ final class TaskItem {
         self.droppedFromTemplate = droppedFromTemplate
     }
 
+    /// Puts a task back exactly as an action deleted it (Undo), keeping its identity and
+    /// history instead of minting new ones.
+    ///
+    /// The 5 minute floor still applies. Every value a snapshot holds came from a task that
+    /// already passed through the clamp, so on honest data it is a no-op; keeping it means this
+    /// path can never produce a task the other inits could not, even from a hand-built or
+    /// stale snapshot. Skipping it would give the model two sets of invariants.
+    init(id: UUID,
+         title: String,
+         estimatedMinutes: Int,
+         categoryRaw: String,
+         sortIndex: Int,
+         createdAt: Date,
+         completedAt: Date?,
+         droppedFromTemplate: Bool) {
+        self.id = id
+        self.title = title
+        self.estimatedMinutes = Swift.max(5, estimatedMinutes)
+        self.categoryRaw = categoryRaw
+        self.sortIndex = sortIndex
+        self.createdAt = createdAt
+        self.completedAt = completedAt
+        self.droppedFromTemplate = droppedFromTemplate
+    }
+
     var category: BlockCategory {
         get { BlockCategory(rawValue: categoryRaw) ?? .fallback }
         set { categoryRaw = newValue.rawValue }

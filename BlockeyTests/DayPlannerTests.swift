@@ -216,7 +216,7 @@ struct DayPlannerTests {
 
         let result = try rig.planner.replace(with: t, inputs: inputs(), openTasks: [])
 
-        #expect(result.cleared?.returned == 1)
+        #expect(result.cleared?.returnedCount == 1)
         #expect(result.cleared?.lost == 1)
         #expect(result.cleared?.removed.count == 3)
         // The only block left is the new one, at the row's time: the clear freed 9 to 10.
@@ -448,6 +448,7 @@ struct DayPlannerTests {
         #expect(filled.deletedTasks == [TaskSnapshot(id: task.id, title: "T", estimatedMinutes: 30,
                                                      categoryRaw: "rest", sortIndex: 7,
                                                      createdAt: filled.deletedTasks[0].createdAt,
+                                                     completedAt: nil,
                                                      droppedFromTemplate: false)])
         #expect(filled.created[0].token?.sourceTaskID == task.id)
     }

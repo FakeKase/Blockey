@@ -51,8 +51,10 @@ struct TaskSnapshot: Equatable, Sendable {
     let categoryRaw: String
     let sortIndex: Int
     let createdAt: Date
+    /// Always nil today (nothing writes `completedAt` yet), but captured so Undo cannot
+    /// silently un-complete a task once completion lands.
+    let completedAt: Date?
     let droppedFromTemplate: Bool
-
 }
 
 extension TaskSnapshot {
@@ -64,7 +66,27 @@ extension TaskSnapshot {
                   categoryRaw: task.categoryRaw,
                   sortIndex: task.sortIndex,
                   createdAt: task.createdAt,
+                  completedAt: task.completedAt,
                   droppedFromTemplate: task.droppedFromTemplate)
+    }
+
+    /// Re-inserts the task unless one with this id already exists. Returns whether it inserted.
+    ///
+    /// The check is explicit because `TaskItem.id` is `.unique`, which makes a second insert an
+    /// upsert: it would overwrite whatever the user changed since, rather than fail. A repeated
+    /// Undo, or a task re-created under the same id, must leave the live row alone.
+    @discardableResult
+    func restore(into context: ModelContext) -> Bool {
+        let id = self.id
+        var descriptor = FetchDescriptor<TaskItem>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        // A failed fetch is treated as "exists": skipping loses nothing, inserting could clobber.
+        guard let found = try? context.fetch(descriptor), found.isEmpty else { return false }
+        context.insert(TaskItem(id: id, title: title, estimatedMinutes: estimatedMinutes,
+                                categoryRaw: categoryRaw, sortIndex: sortIndex,
+                                createdAt: createdAt, completedAt: completedAt,
+                                droppedFromTemplate: droppedFromTemplate))
+        return true
     }
 }
 
@@ -80,10 +102,18 @@ struct PlanMessage: Equatable {
 /// declined and cancelled events, which are deleted all the same, and it can be a fetch
 /// behind the store.
 struct ClearResult: Equatable {
-    /// Every block the clear deleted, as it was. A later Undo recreates these.
+    /// A removed block that had a source task, paired with the inbox task the clear made for it.
+    /// Paired so Undo can ask, per block, whether that task is still in the inbox.
+    struct Returned: Equatable {
+        let block: Block
+        let insertedTaskID: UUID
+    }
+
+    /// Every block the clear deleted, as it was, notes and alarms included. A later Undo
+    /// recreates these.
     let removed: [Block]
-    /// Ids of the inbox tasks the clear inserted, one per removed block that had a source task.
-    let insertedTaskIDs: [UUID]
+    /// The removed blocks that had a source task, each with the inbox task inserted for it.
+    let returned: [Returned]
 
     /// Own blocks the clear left in place because Blockey cannot edit them (recurring or
     /// multi-day). Undo could not restore a recurrence rule, so they are skipped rather than
@@ -92,11 +122,13 @@ struct ClearResult: Equatable {
     /// also recurring or multi-day is kept but not counted. Rare in Blockey's own calendar.
     let kept: Int
 
-    var returned: Int { insertedTaskIDs.count }
+    /// Ids of the inbox tasks the clear inserted.
+    var insertedTaskIDs: [UUID] { returned.map(\.insertedTaskID) }
+    var returnedCount: Int { returned.count }
     var lost: Int { removed.filter { $0.token == nil }.count }
 
     var message: PlanMessage {
-        switch (returned, lost) {
+        switch (returnedCount, lost) {
         case (0, 0):
             return PlanMessage(text: "Day cleared")
         case (let back, 0):
@@ -120,8 +152,11 @@ struct StampResult: Equatable {
     let movedCount: Int
     /// Ids of the inbox tasks stamping inserted (`unplaced` then `failures`).
     let insertedTaskIDs: [UUID]
-    /// Set when this was a replace: what the clear beforehand did.
+    /// Set when this was a replace: what the clear beforehand did. Its `removed` and
+    /// `returned` are what Start-over Undo puts back.
     let cleared: ClearResult?
+    /// How to undo this stamp. Built by `DayPlanner` from this result and the inputs.
+    let undo: UndoRecord
 
     var toInbox: Int { unplaced.count + failures.count }
 
@@ -148,11 +183,22 @@ enum StampOutcome: Equatable {
 
 /// What filling the day did.
 struct FillResult: Equatable {
-    /// Blocks written, with the task each one came from.
-    let created: [Block]
-    /// The tasks it deleted, as they were, in deletion order. A later Undo reinserts these.
-    let deletedTasks: [TaskSnapshot]
+    /// A block written, with the task it was made from, as that task was when it was deleted.
+    struct Placement: Equatable {
+        let block: Block
+        let task: TaskSnapshot
+    }
+
+    /// Blocks written, each with the task it came from, in placement order. Paired so Undo
+    /// cannot reinsert a task without knowing which block stands in for it.
+    let placements: [Placement]
     let failed: Int
+    /// How to undo this fill. Built by `DayPlanner` from this result and the inputs.
+    let undo: UndoRecord
+
+    var created: [Block] { placements.map(\.block) }
+    /// The tasks it deleted, as they were, in deletion order.
+    var deletedTasks: [TaskSnapshot] { placements.map(\.task) }
 
     var placed: Int { created.count }
 
@@ -165,6 +211,137 @@ struct FillResult: Equatable {
                            ? "Nothing fits in the time you have left"
                            : "Placed \(placed) task\(placed == 1 ? "" : "s")",
                            isWarning: placed == 0)
+    }
+}
+
+/// Everything needed to undo one stamp, Start over or Fill day.
+///
+/// Built by `DayPlanner` from the result and the inputs together, so a view cannot pair one
+/// action's result with another's day. It is a class because it is **single use**: the second
+/// Undo of a Start over would otherwise recreate the cleared blocks a second time. It becomes
+/// spent only after an undo has fully landed, so a throw leaves it usable for a retry.
+///
+/// Nothing here is persisted. It lives as long as the banner that offers it.
+final class UndoRecord: Equatable {
+    /// The day the action ran on. Undo acts here, whatever day is selected by then.
+    let day: Date
+    let calendar: Calendar
+    /// Hidden at the time, so the fresh fetch Undo makes sees the same fixed events the
+    /// action planned around.
+    let hiddenCalendarIDs: Set<String>
+    /// The blocks the action created. Removed by token.
+    let created: [Block]
+    /// Inbox tasks a stamp inserted (unplaced and failed rows).
+    let insertedTaskIDs: [UUID]
+    /// Fill day: the blocks and the tasks they replaced.
+    let placements: [FillResult.Placement]
+    /// Start over: what the clear before the stamp removed and returned.
+    let cleared: ClearResult?
+
+    private(set) var isSpent = false
+
+    init(inputs: DayPlanInputs,
+         created: [Block],
+         insertedTaskIDs: [UUID] = [],
+         placements: [FillResult.Placement] = [],
+         cleared: ClearResult? = nil) {
+        self.day = inputs.date
+        self.calendar = inputs.calendar
+        self.hiddenCalendarIDs = inputs.hiddenCalendarIDs
+        self.created = created
+        self.insertedTaskIDs = insertedTaskIDs
+        self.placements = placements
+        self.cleared = cleared
+    }
+
+    /// Whether there is anything to undo. A stamp that placed and returned nothing has no
+    /// reason to show an Undo button.
+    var hasEffect: Bool {
+        !created.isEmpty || !insertedTaskIDs.isEmpty || !placements.isEmpty
+            || !(cleared?.removed.isEmpty ?? true)
+    }
+
+    fileprivate func markSpent() { isSpent = true }
+
+    // Identity, not content: two records of identical actions are still two records.
+    static func == (lhs: UndoRecord, rhs: UndoRecord) -> Bool { lhs === rhs }
+}
+
+/// What an undo did, in counts the banner can tell the truth with.
+struct UndoOutcome: Equatable {
+    /// The record had already been applied; nothing was done.
+    var alreadyUndone = false
+    /// Blocks the action had created.
+    var blocksTargeted = 0
+    /// Of those, how many were found by token and deleted.
+    var blocksRemoved = 0
+    /// Found but not removed because Blockey cannot edit them (made recurring in Calendar.app).
+    var blocksLeftAlone = 0
+    /// Deleted since, moved off the day, or token stripped. None of these was deleted. Derived,
+    /// so the counts cannot disagree.
+    var blocksMissing: Int { Swift.max(0, blocksTargeted - blocksRemoved - blocksLeftAlone) }
+    /// Inbox tasks the action created that Undo deleted. One since placed no longer exists
+    /// and is not counted.
+    var inboxTasksDeleted = 0
+    /// Fill day: deleted tasks put back.
+    var tasksReinserted = 0
+    /// Of those, how many went back although their block was not removed. It was deleted, or
+    /// its token was stripped, and Undo cannot tell which. If it was stripped, the same work is
+    /// now in the inbox and on the calendar: a duplicate, the accepted failure, where the
+    /// alternative is losing the task.
+    var tasksReinsertedBlockUnaccountedFor = 0
+    /// Fill day: tasks not put back because their block, found by token, is still on the
+    /// calendar within a week of the recorded day (the user moved it).
+    var tasksKeptBecauseBlockSurvived = 0
+    /// Start over: cleared blocks written back.
+    var blocksRecreated = 0
+    /// Of those, how many had no token and were given a fresh one.
+    var recreatedWithNewIdentity = 0
+    /// Start over: cleared blocks left out because their returned task was placed since.
+    var notRestoredTaskPlaced = 0
+    /// Start over: cleared blocks left out because a fixed event now sits where they were.
+    /// Each one is in the inbox as a task (the clear's own, or one made by Undo), never dropped.
+    var notRestoredFixedConflict: [Block] = []
+
+    var message: PlanMessage {
+        if alreadyUndone { return PlanMessage(text: "Already undone") }
+        func plural(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
+
+        var parts: [String] = []
+        if blocksTargeted > 0 {
+            let attempted = blocksTargeted - blocksLeftAlone
+            if attempted > 0 || blocksLeftAlone == 0 {
+                parts.append(blocksMissing == 0
+                             ? "Removed \(plural(blocksRemoved, "block"))"
+                             : "Removed \(blocksRemoved) of \(plural(attempted, "block"))")
+            }
+        }
+        if blocksLeftAlone > 0 {
+            let n = blocksLeftAlone
+            parts.append("\(plural(n, "block")) \(n == 1 ? "was" : "were") changed in Calendar, so \(n == 1 ? "it was" : "they were") left")
+        }
+        if blocksRecreated > 0 { parts.append("Restored \(plural(blocksRecreated, "block"))") }
+        let backCleanly = tasksReinserted - tasksReinsertedBlockUnaccountedFor
+        if backCleanly > 0 { parts.append("\(plural(backCleanly, "task")) back in the inbox") }
+        if tasksReinsertedBlockUnaccountedFor > 0 {
+            let n = tasksReinsertedBlockUnaccountedFor
+            parts.append("\(plural(n, "task")) \(n == 1 ? "is" : "are") back in your inbox, \(n == 1 ? "its block" : "their blocks") may still be on your calendar")
+        }
+        if tasksKeptBecauseBlockSurvived > 0 {
+            let n = tasksKeptBecauseBlockSurvived
+            parts.append("\(plural(n, "task")) not returned, \(n == 1 ? "its block is" : "their blocks are") still on your calendar")
+        }
+        if notRestoredTaskPlaced > 0 {
+            parts.append("\(notRestoredTaskPlaced) \(notRestoredTaskPlaced == 1 ? "block" : "blocks") not restored, \(notRestoredTaskPlaced == 1 ? "its task is" : "their tasks are") no longer in the inbox")
+        }
+        if !notRestoredFixedConflict.isEmpty {
+            parts.append("\(notRestoredFixedConflict.count) \(notRestoredFixedConflict.count == 1 ? "block" : "blocks") not restored, a meeting is there now, kept in the inbox")
+        }
+        let isWarning = blocksMissing > 0 || blocksLeftAlone > 0 || tasksKeptBecauseBlockSurvived > 0
+            || tasksReinsertedBlockUnaccountedFor > 0
+            || notRestoredTaskPlaced > 0 || !notRestoredFixedConflict.isEmpty
+        return PlanMessage(text: parts.isEmpty ? "Nothing to undo" : parts.joined(separator: " \u{00B7} "),
+                           isWarning: isWarning)
     }
 }
 
@@ -346,7 +523,11 @@ struct DayPlanner {
                            unplaced: unplaced,
                            movedCount: result.movedCount,
                            insertedTaskIDs: insertedIDs,
-                           cleared: cleared)
+                           cleared: cleared,
+                           undo: UndoRecord(inputs: inputs,
+                                            created: created,
+                                            insertedTaskIDs: insertedIDs,
+                                            cleared: cleared))
     }
 
     // MARK: Clear
@@ -367,17 +548,17 @@ struct DayPlanner {
                                    calendar: inputs.calendar).blocks.filter { !$0.isEditable }.count
         let removed = try writer.deleteAllBlocks(on: inputs.date, calendar: inputs.calendar)
         var index = Self.nextInboxSortIndex(openTasks)
-        var insertedIDs: [UUID] = []
+        var returned: [ClearResult.Returned] = []
         for block in removed where block.token?.sourceTaskID != nil {
             let task = TaskItem(title: block.title,
                                 estimatedMinutes: Int(block.range.duration / 60),
                                 categoryRaw: block.token?.categorySlug ?? BlockCategory.fallback.rawValue,
                                 sortIndex: index)
             context.insert(task)
-            insertedIDs.append(task.id)
+            returned.append(ClearResult.Returned(block: block, insertedTaskID: task.id))
             index -= 1
         }
-        return ClearResult(removed: removed, insertedTaskIDs: insertedIDs, kept: kept)
+        return ClearResult(removed: removed, returned: returned, kept: kept)
     }
 
     // MARK: Fill
@@ -388,8 +569,7 @@ struct DayPlanner {
         var busy = writer.contents(for: inputs.date,
                                    ignoring: inputs.hiddenCalendarIDs,
                                    calendar: inputs.calendar).busy
-        var created: [Block] = []
-        var deleted: [TaskSnapshot] = []
+        var placements: [FillResult.Placement] = []
         var failed = 0
 
         for task in openTasks {
@@ -402,16 +582,19 @@ struct DayPlanner {
                                                    sourceTaskID: task.id,
                                                    alarmMinutesBefore: inputs.alarmMinutesBefore)
                 busy.append(slot)
-                deleted.append(TaskSnapshot(task))
+                placements.append(FillResult.Placement(block: block, task: TaskSnapshot(task)))
                 context.delete(task)
-                created.append(block)
             } catch {
                 // Keep going: one unwritable event should not strand the rest.
                 failed += 1
             }
         }
 
-        return FillResult(created: created, deletedTasks: deleted, failed: failed)
+        return FillResult(placements: placements,
+                          failed: failed,
+                          undo: UndoRecord(inputs: inputs,
+                                           created: placements.map(\.block),
+                                           placements: placements))
     }
 
     // MARK: Place and return
@@ -444,6 +627,138 @@ struct DayPlanner {
                             sortIndex: Self.nextInboxSortIndex(openTasks))
         context.insert(task)
         return ReturnResult(removed: block, insertedTaskID: task.id)
+    }
+
+    // MARK: Undo
+
+    /// Reverses a stamp, Start over or Fill day.
+    ///
+    /// The calendar half is one atomic batch (`BlockWriting.applyUndo`); the SwiftData half runs
+    /// only after it lands. Throws, having changed nothing and left `record` usable, if the
+    /// batch fails. A record already applied returns an `alreadyUndone` outcome and does nothing.
+    ///
+    /// Fresh state, not recorded state, decides what is safe: the fixed events a recreated block
+    /// must avoid, and whether a returned task is still in the inbox, are read now.
+    @discardableResult
+    func undo(_ record: UndoRecord) throws -> UndoOutcome {
+        guard !record.isSpent else { return UndoOutcome(alreadyUndone: true) }
+
+        let fresh = writer.contents(for: record.day,
+                                    ignoring: record.hiddenCalendarIDs,
+                                    calendar: record.calendar)
+        var outcome = UndoOutcome()
+        outcome.blocksTargeted = record.created.count
+
+        // Start over: decide which cleared blocks come back.
+        var restorable: [(block: Block, taskID: UUID?)] = []
+        if let cleared = record.cleared {
+            var taskForBlock: [String: UUID] = [:]
+            for pair in cleared.returned { taskForBlock[pair.block.id] = pair.insertedTaskID }
+            for block in cleared.removed {
+                let taskID = taskForBlock[block.id]
+                // The clear turned this block into an inbox task. If that task has gone, the
+                // user placed it again, and recreating the block would put it on the calendar
+                // twice.
+                if let taskID, !taskExists(taskID) {
+                    outcome.notRestoredTaskPlaced += 1
+                    continue
+                }
+                restorable.append((block, taskID))
+            }
+        }
+        // Fixed events always win, including ones that arrived after the clear.
+        let split = RestoreFilter.split(restorable.map(\.block.range),
+                                        avoiding: fresh.fixed.map(\.range))
+        outcome.notRestoredFixedConflict = split.blocked.map { restorable[$0].block }
+
+        var drafts: [UndoDraft] = []
+        var returnedTasksToDelete: [UUID] = []
+        for index in split.writable {
+            let (block, taskID) = restorable[index]
+            // A block that had no token is recreated with a fresh one (no slug is invented).
+            // Leaving it tokenless would also work, but a token is what lets any later Undo or
+            // edit find it, and the user's work comes back either way.
+            if block.token == nil { outcome.recreatedWithNewIdentity += 1 }
+            drafts.append(UndoDraft(title: block.title,
+                                    range: block.range,
+                                    token: block.token ?? BlockToken(categorySlug: nil),
+                                    notes: block.notes,
+                                    alarmOffsets: block.alarmOffsets))
+            // Only a block that really comes back releases its inbox task. One left out for a
+            // meeting keeps its task, or the work would be in neither place.
+            if let taskID { returnedTasksToDelete.append(taskID) }
+        }
+
+        let batch = UndoBatch(day: record.day,
+                              removeTokenIDs: record.created.compactMap { $0.token?.id },
+                              create: drafts)
+        var applied = UndoApplied(removed: [], leftAlone: [], created: [])
+        if !batch.removeTokenIDs.isEmpty || !batch.create.isEmpty {
+            applied = try writer.applyUndo(batch, calendar: record.calendar)
+        }
+        record.markSpent()
+        outcome.blocksRemoved = applied.removed.count
+        outcome.blocksLeftAlone = applied.leftAlone.count
+        outcome.blocksRecreated = applied.created.count
+
+        // SwiftData half. The inbox tasks this action created are deleted unless the user has
+        // since placed them, which already removed them.
+        for id in record.insertedTaskIDs + returnedTasksToDelete {
+            if deleteTask(id) { outcome.inboxTasksDeleted += 1 }
+        }
+
+        // A cleared block that a new meeting stops us recreating, and that has no inbox task
+        // from the clear (it came from a template or was typed in Calendar.app), would exist
+        // nowhere. Give it a task, on top of the inbox, so it is never dropped.
+        var nextIndex = (((try? context.fetch(FetchDescriptor<TaskItem>())) ?? []).map(\.sortIndex).min() ?? 0) - 1
+        for index in split.blocked where restorable[index].taskID == nil {
+            let block = restorable[index].block
+            context.insert(TaskItem(title: block.title,
+                                    estimatedMinutes: Int(block.range.duration / 60),
+                                    categoryRaw: block.token?.categorySlug ?? BlockCategory.fallback.rawValue,
+                                    sortIndex: nextIndex))
+            nextIndex -= 1
+        }
+
+        // Fill day: a task goes back unless its block is found by token. A block Undo removed
+        // is plainly gone. For the rest, look for the token within a week of the recorded day,
+        // which finds a block the user dragged elsewhere. Anything not found is reinserted:
+        // it was deleted, or its token was stripped, and the two cannot be told apart. No
+        // lookalike guessing by title and time, which can swallow a task. The rule is that work
+        // must never end up in neither place; a duplicate is the acceptable failure.
+        let removedIDs = Set(applied.removed)
+        let unresolved = Set(record.placements.compactMap { $0.block.token?.id }.filter { !removedIDs.contains($0) })
+        let stillThere = unresolved.isEmpty
+            ? []
+            : writer.existingTokenIDs(unresolved, around: record.day, days: 7, calendar: record.calendar)
+        for placement in record.placements {
+            let id = placement.block.token?.id
+            if let id, removedIDs.contains(id) {
+                if placement.task.restore(into: context) { outcome.tasksReinserted += 1 }
+            } else if let id, stillThere.contains(id) {
+                outcome.tasksKeptBecauseBlockSurvived += 1
+            } else if placement.task.restore(into: context) {
+                outcome.tasksReinserted += 1
+                outcome.tasksReinsertedBlockUnaccountedFor += 1
+            }
+        }
+        return outcome
+    }
+
+    private func taskExists(_ id: UUID) -> Bool {
+        var descriptor = FetchDescriptor<TaskItem>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        // A failed fetch reads as "gone": the safe error here is not recreating a block.
+        return ((try? context.fetch(descriptor))?.isEmpty ?? true) == false
+    }
+
+    /// Deletes the task with this id if it exists. Returns whether it did.
+    private func deleteTask(_ id: UUID) -> Bool {
+        var descriptor = FetchDescriptor<TaskItem>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        guard let task = (try? context.fetch(descriptor))?.first else { return false }
+        context.delete(task)
+        return true
     }
 
     // MARK: Helpers
