@@ -157,6 +157,7 @@ enum DemoScenario {
         // demo run would stack a second plan on top of the first.
         _ = try? calendars.deleteAllBlocks(on: date)
         calendars.seedDemoMeetings(on: date)
+        calendars.seedDemoHistory(now: date)
         if wantsUndoExercise { exerciseUndo(calendars: calendars, context: context, on: date) }
 
         if wantsEvening {

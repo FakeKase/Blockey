@@ -177,7 +177,7 @@ struct TemplateEditor: View {
     private func addRow() {
         // Start the new row after the last one, so building a day is sequential.
         let start = template.orderedRows.last.map { $0.startMinuteOfDay + $0.durationMinutes } ?? 9 * 60
-        let row = TemplateRow(title: "New block",
+        let row = TemplateRow(title: DefaultTitles.newBlock,
                               startMinuteOfDay: min(start, 23 * 60),
                               durationMinutes: 60)
         row.template = template

@@ -210,6 +210,32 @@ final class CalendarService {
         return contents
     }
 
+    /// Past Blockey-calendar events as plain title samples, newest first, for the inbox's title
+    /// suggestions (ADR 006). Reads the Blockey calendar only. Called once per inbox open and
+    /// never from the `.EKEventStoreChanged` path, so known gap 5 is not made worse.
+    ///
+    /// The filtering lives in `BlockHistory` so it is tested without EventKit.
+    func blockHistory(endingAt now: Date, days: Int = 90, limit: Int = 2000,
+                      calendar: Calendar = .current) -> [TitleSample] {
+        guard access.isGranted, let ours = blockeyCalendar(),
+              let start = BlockHistory.windowStart(endingAt: now, days: days, calendar: calendar)
+        else { return [] }
+
+        let predicate = store.predicateForEvents(withStart: start, end: now, calendars: [ours])
+        let ourID = ours.calendarIdentifier
+        let facts = store.events(matching: predicate).map { event in
+            EventFacts(title: event.title ?? "",
+                       start: event.startDate,
+                       end: event.endDate,
+                       isAllDay: event.isAllDay,
+                       hasRecurrence: event.hasRecurrenceRules,
+                       url: event.url,
+                       isInBlockeyCalendar: event.calendar?.calendarIdentifier == ourID,
+                       isDetached: event.isDetached)
+        }
+        return BlockHistory.samples(from: facts, windowStart: start, now: now, limit: limit)
+    }
+
     // MARK: - Writing
 
     @discardableResult
@@ -595,6 +621,30 @@ final class CalendarService {
         }
         try? store.commit()
         revision &+= 1
+    }
+
+    /// Writes a few past blocks into the simulator's Blockey calendar so title suggestions have
+    /// something to show. Replaces whatever blocks were on those days, so repeat runs do not stack.
+    func seedDemoHistory(now: Date = .now, calendar: Calendar = .current) {
+        guard access.isGranted else { return }
+        let thai = "\u{0E01}\u{0E34}\u{0E19}\u{0E02}\u{0E49}\u{0E32}\u{0E27}"   // กินข้าว
+        let past: [(daysAgo: Int, hour: Int, title: String, minutes: Int, slug: String)] = [
+            (1, 9, "Gym", 60, "health"), (4, 9, "gym", 45, "health"),
+            (2, 10, "Write the launch post", 90, "deep"), (6, 10, "Write weekly notes", 30, "deep"),
+            (3, 13, "Call mom", 20, "personal"), (5, 13, thai, 45, "rest")
+        ]
+        let today = calendar.startOfDay(for: now)
+        for daysAgo in Set(past.map(\.daysAgo)) {
+            guard let day = calendar.date(byAdding: .day, value: -daysAgo, to: today) else { continue }
+            _ = try? deleteAllBlocks(on: day, calendar: calendar)
+        }
+        for p in past {
+            guard let day = calendar.date(byAdding: .day, value: -p.daysAgo, to: today),
+                  let start = calendar.date(bySettingHour: p.hour, minute: 0, second: 0, of: day) else { continue }
+            _ = try? createBlock(title: p.title,
+                                 range: TimeRange(start: start, duration: TimeInterval(p.minutes * 60)),
+                                 categorySlug: p.slug)
+        }
     }
 
     private static let demoMarker = URL(string: "blockey://demo")!

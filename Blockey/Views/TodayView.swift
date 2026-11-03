@@ -672,7 +672,7 @@ struct TodayView: View {
         let fallback = DaySchedule.snap(isToday ? now : window.start, toMinutes: snapMinutes, calendar: calendar)
         let start = DaySchedule.firstFit(duration: length, in: gaps)?.start ?? fallback
         do {
-            let block = try calendars.createBlock(title: "New block",
+            let block = try calendars.createBlock(title: DefaultTitles.newBlock,
                                                   range: TimeRange(start: start, duration: length),
                                                   category: .deepWork,
                                                   alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
