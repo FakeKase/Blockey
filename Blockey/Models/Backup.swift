@@ -91,7 +91,7 @@ struct BlockeyBackup: Codable {
         for task in tasks {
             context.insert(TaskItem(title: task.title,
                                     estimatedMinutes: task.estimatedMinutes,
-                                    category: BlockCategory(rawValue: task.category) ?? .fallback,
+                                    categoryRaw: task.category,
                                     sortIndex: task.sortIndex))
         }
 
@@ -104,7 +104,7 @@ struct BlockeyBackup: Codable {
                 let row = TemplateRow(title: rowPayload.title,
                                       startMinuteOfDay: rowPayload.startMinuteOfDay,
                                       durationMinutes: rowPayload.durationMinutes,
-                                      category: BlockCategory(rawValue: rowPayload.category) ?? .fallback)
+                                      categoryRaw: rowPayload.category)
                 row.template = template
                 context.insert(row)
             }

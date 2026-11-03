@@ -21,6 +21,33 @@ enum SigningReminder {
     /// Stable on purpose — anything date-dependent would break the match.
     static let title = "Re-sign Blockey"
 
+    /// Scheme and host of the marker written to the reminder's `url`.
+    private static let markerScheme = "blockey"
+    private static let markerHost = "signing-reminder"
+
+    /// What the reminder carries in its `url`. The title alone cannot identify it,
+    /// because the user can name a block anything, including this. The host is
+    /// deliberately not `block`, so `BlockToken(url:)` rejects it and the reminder
+    /// can never be read as a block (and a block can never match here).
+    static let markerURL = URL(string: "blockey://signing-reminder")
+
+    /// Whether a url is the reminder marker. Case-insensitive like BlockToken:
+    /// another client may normalise scheme and host.
+    static func isMarked(url: URL?) -> Bool {
+        url?.scheme?.lowercased() == markerScheme && url?.host?.lowercased() == markerHost
+    }
+
+    /// Whether an event is our reminder, so cleanup touches nothing else.
+    ///
+    /// The marker is authoritative. The fallback exists for reminders written
+    /// before the marker did: those are all-day with exactly this title and no
+    /// url. Requiring no url means any other url (a block token, a meeting link)
+    /// marks the event as someone's own, so it needs no dependency on BlockToken.
+    static func isReminder(title: String?, isAllDay: Bool, url: URL?) -> Bool {
+        if isMarked(url: url) { return true }
+        return url == nil && isAllDay && title == Self.title
+    }
+
     /// Only short-lived profiles need warning about. A paid account's profile
     /// lasts a year, and a reminder eleven months out is noise.
     static let horizon: TimeInterval = 30 * 86_400

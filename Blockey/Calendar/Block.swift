@@ -43,6 +43,16 @@ struct Block: Identifiable, Equatable, Sendable {
     /// searching by token when it goes stale.
     var eventIdentifier: String?
 
+    /// The event's notes, carried so Undo can put a cleared block back exactly (ADR 007).
+    /// Only `Calendar/` reads this; `Planning/` passes it back untouched and views never touch it.
+    var notes: String?
+
+    /// Each time alarm as seconds relative to the event start (negative is before), sorted
+    /// ascending because EventKit does not preserve insertion order. An absolute-date alarm is
+    /// converted to its offset from the start, which is exact because Undo recreates the block
+    /// at its original time.
+    var alarmOffsets: [TimeInterval]
+
     var token: BlockToken? {
         if case .block(let token) = kind { return token }
         return nil
@@ -65,6 +75,18 @@ struct Block: Identifiable, Equatable, Sendable {
         self.isAllDay = event.isAllDay
         self.calendarTitle = event.calendar?.title ?? ""
         self.eventIdentifier = event.eventIdentifier
+        self.notes = event.notes
+        // Location-based alarms have no time to restore and would read as an offset of 0.
+        self.alarmOffsets = (event.alarms ?? []).compactMap { alarm in
+            if alarm.structuredLocation != nil { return nil }
+            if let absolute = alarm.absoluteDate {
+                return absolute.timeIntervalSince(event.startDate)
+            }
+            return alarm.relativeOffset
+        }
+        // EventKit does not keep the order alarms were added in (the simulator hands them back
+        // reordered), so sort: equal sets of alarms must make equal blocks.
+        .sorted()
 
         let spansWholeDay = event.endDate.timeIntervalSince(event.startDate) >= 86_400
         self.isEditable = isOurs
@@ -81,7 +103,9 @@ struct Block: Identifiable, Equatable, Sendable {
          isAllDay: Bool = false,
          calendarTitle: String = "",
          eventIdentifier: String? = nil,
-         isEditable: Bool? = nil) {
+         isEditable: Bool? = nil,
+         notes: String? = nil,
+         alarmOffsets: [TimeInterval] = []) {
         self.id = id
         self.title = title
         self.range = range
@@ -90,6 +114,8 @@ struct Block: Identifiable, Equatable, Sendable {
         self.calendarTitle = calendarTitle
         self.eventIdentifier = eventIdentifier
         self.isEditable = isEditable ?? (kind != .fixed)
+        self.notes = notes
+        self.alarmOffsets = alarmOffsets
     }
 }
 

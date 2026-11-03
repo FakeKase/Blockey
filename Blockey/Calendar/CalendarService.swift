@@ -218,22 +218,159 @@ final class CalendarService {
                      category: BlockCategory,
                      sourceTaskID: UUID? = nil,
                      alarmMinutesBefore: Int? = nil) throws -> Block {
+        try createBlock(title: title, range: range, categorySlug: category.rawValue,
+                        sourceTaskID: sourceTaskID, alarmMinutesBefore: alarmMinutesBefore)
+    }
+
+    /// The slug form, for work that already carries one (inbox tasks, template rows). Going
+    /// through `BlockCategory` would turn a slug this build doesn't know into the fallback.
+    @discardableResult
+    func createBlock(title: String,
+                     range: TimeRange,
+                     categorySlug: String?,
+                     sourceTaskID: UUID? = nil,
+                     alarmMinutesBefore: Int? = nil) throws -> Block {
+        try createBlock(title: title,
+                        range: range,
+                        token: BlockToken(categorySlug: categorySlug, sourceTaskID: sourceTaskID),
+                        notes: nil,
+                        alarmOffsets: alarmMinutesBefore.map { [TimeInterval(-$0 * 60)] } ?? [])
+    }
+
+    /// The one place a block is written. The token goes in verbatim, so Undo can give a block
+    /// back its original id, slug, source task and any query items this build does not know.
+    @discardableResult
+    func createBlock(title: String,
+                     range: TimeRange,
+                     token: BlockToken?,
+                     notes: String?,
+                     alarmOffsets: [TimeInterval]) throws -> Block {
         guard access.isGranted else { throw Failure.notPermitted }
         let calendar = try ensureBlockeyCalendar()
 
+        let event = makeEvent(in: calendar, title: title, range: range, token: token,
+                              notes: notes, alarmOffsets: alarmOffsets)
+        try store.save(event, span: .thisEvent, commit: true)
+        revision &+= 1
+        return Block(event: event, blockeyCalendarID: calendar.calendarIdentifier)
+    }
+
+    /// Which of `ids` have a block in the Blockey calendar within `days` days of `day`, by token.
+    /// See `BlockWriting.existingTokenIDs` for why a failure reads as "none".
+    func existingTokenIDs(_ ids: Set<UUID>, around day: Date, days: Int,
+                          calendar: Calendar = .current) -> Set<UUID> {
+        guard access.isGranted, !ids.isEmpty, let ours = blockeyCalendar() else { return [] }
+        let dayStart = calendar.startOfDay(for: day)
+        guard let from = calendar.date(byAdding: .day, value: -days, to: dayStart),
+              let to = calendar.date(byAdding: .day, value: days + 1, to: dayStart) else { return [] }
+        let predicate = store.predicateForEvents(withStart: from, end: to, calendars: [ours])
+        let found = store.events(matching: predicate).compactMap { BlockToken(url: $0.url)?.id }
+        return ids.intersection(found)
+    }
+
+    /// Builds an unsaved block event. Shared by `createBlock` and `applyUndo` so both write
+    /// the same fields.
+    private func makeEvent(in calendar: EKCalendar,
+                           title: String,
+                           range: TimeRange,
+                           token: BlockToken?,
+                           notes: String?,
+                           alarmOffsets: [TimeInterval]) -> EKEvent {
         let event = EKEvent(eventStore: store)
         event.calendar = calendar
         event.title = title
         event.startDate = range.start
         event.endDate = range.end
-        event.url = BlockToken(category: category, sourceTaskID: sourceTaskID).url
-        if let alarmMinutesBefore {
-            event.addAlarm(EKAlarm(relativeOffset: TimeInterval(-alarmMinutesBefore * 60)))
+        // A nil token writes no url: a block that never had one stays tokenless.
+        if let token {
+            if let url = token.url {
+                event.url = url
+            } else {
+                // Unreachable by construction (fixed scheme, host and UUID path). Loud in debug
+                // builds so it can't hide; harmless in release, where the block is just tokenless.
+                assertionFailure("BlockToken produced no url for a new block")
+            }
+        }
+        event.notes = notes
+        for offset in alarmOffsets {
+            event.addAlarm(EKAlarm(relativeOffset: offset))
+        }
+        return event
+    }
+
+    /// Undo as one operation: delete the blocks an action created, found by token over the
+    /// recorded day, and write back the blocks it removed.
+    ///
+    /// Blocks are never looked up by `eventIdentifier` here (ADR 001): it does not survive every
+    /// edit, and a stale one could point at a block that is not ours to delete. A token that
+    /// finds nothing, deleted or stripped, lands in neither `removed` nor `leftAlone`, and nothing is
+    /// removed for it; the planner derives the missing count from that.
+    ///
+    /// Everything is staged with `commit: false` and committed once. On any throw the staged
+    /// work is discarded with `reset()`, for the reason `deleteAllBlocks` gives: it would
+    /// otherwise be flushed by the next unrelated save.
+    func applyUndo(_ batch: UndoBatch, calendar: Calendar = .current) throws -> UndoApplied {
+        guard access.isGranted else { throw Failure.notPermitted }
+
+        let dayStart = calendar.startOfDay(for: batch.day)
+        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else {
+            return UndoApplied(removed: [], leftAlone: [], created: [])
         }
 
-        try store.save(event, span: .thisEvent, commit: true)
+        // Nothing to write means no reason to create the calendar just to find it empty.
+        let ours: EKCalendar
+        if batch.create.isEmpty {
+            guard let existing = blockeyCalendar() else {
+                return UndoApplied(removed: [], leftAlone: [], created: [])
+            }
+            ours = existing
+        } else {
+            ours = try ensureBlockeyCalendar()
+        }
+
+        var byToken: [UUID: EKEvent] = [:]
+        let predicate = store.predicateForEvents(withStart: dayStart, end: dayEnd, calendars: [ours])
+        // Sorted so that if a token is on two events (a block duplicated in Calendar.app keeps
+        // its url), the same one is chosen every time: the earliest. Only one is removed; the
+        // other is the user's own copy.
+        for event in store.events(matching: predicate).sorted(by: { $0.startDate < $1.startDate }) {
+            guard let id = BlockToken(url: event.url)?.id, byToken[id] == nil else { continue }
+            byToken[id] = event
+        }
+
+        var removed: [UUID] = []
+        var leftAlone: [UUID] = []
+        var seen = Set<UUID>()
+        var written: [EKEvent] = []
+        do {
+            for id in batch.removeTokenIDs where seen.insert(id).inserted {
+                guard let event = byToken[id] else { continue }
+                // Same refusal as `delete`: recurring, all-day and multi-day events are not
+                // ours to rewrite, and Clear leaves them too.
+                guard Block(event: event, blockeyCalendarID: ours.calendarIdentifier).isEditable else {
+                    leftAlone.append(id)
+                    continue
+                }
+                try store.remove(event, span: .thisEvent, commit: false)
+                removed.append(id)
+            }
+            for draft in batch.create {
+                let event = makeEvent(in: ours, title: draft.title, range: draft.range,
+                                      token: draft.token, notes: draft.notes,
+                                      alarmOffsets: draft.alarmOffsets)
+                try store.save(event, span: .thisEvent, commit: false)
+                written.append(event)
+            }
+            try store.commit()
+        } catch {
+            store.reset()
+            throw error
+        }
+
         revision &+= 1
-        return Block(event: event, blockeyCalendarID: calendar.calendarIdentifier)
+        return UndoApplied(removed: removed,
+                           leftAlone: leftAlone,
+                           created: written.map { Block(event: $0, blockeyCalendarID: ours.calendarIdentifier) })
     }
 
     func update(_ block: Block,
@@ -252,7 +389,13 @@ final class CalendarService {
         if let category {
             var token = block.token ?? BlockToken()
             token.category = category
-            event.url = token.url
+            if let url = token.url {
+                event.url = url
+            } else {
+                // Same unreachable case as in createBlock. Here the old token stays, so the
+                // save would succeed without the category change: say so in debug builds.
+                assertionFailure("BlockToken produced no url; category change not written")
+            }
         }
 
         try store.save(event, span: .thisEvent, commit: true)
@@ -281,8 +424,17 @@ final class CalendarService {
         // All-day events in this calendar are not blocks — nothing else in the
         // app treats them as one, they consume no time, and the signing reminder
         // is one of them. Clearing the day leaves them alone.
-        let events = store.events(matching: predicate).filter { !$0.isAllDay }
-        let removed = events.map { Block(event: $0, blockeyCalendarID: blockeyCalendar.calendarIdentifier) }
+        //
+        // Events Blockey cannot edit (recurring, multi-day) are left alone too: `delete`
+        // refuses them, and Undo could not restore a recurrence rule. Judged by `Block`'s
+        // own `isEditable` so the rule lives in one place.
+        let ourID = blockeyCalendar.calendarIdentifier
+        let doomed = store.events(matching: predicate)
+            .filter { !$0.isAllDay }
+            .map { (event: $0, block: Block(event: $0, blockeyCalendarID: ourID)) }
+            .filter { $0.block.isEditable }
+        let events = doomed.map(\.event)
+        let removed = doomed.map(\.block)
 
         do {
             for event in events {
@@ -338,10 +490,15 @@ final class CalendarService {
         let pending = store.events(matching: store.predicateForEvents(withStart: calendar.startOfDay(for: now),
                                                                       end: searchEnd,
                                                                       calendars: [blockeyCalendar]))
-            .filter { $0.title == SigningReminder.title }
+            // Never by title alone: a timed block the user named the same would be
+            // deleted. See `SigningReminder.isReminder`.
+            .filter { SigningReminder.isReminder(title: $0.title, isAllDay: $0.isAllDay, url: $0.url) }
 
         if let wanted, pending.count == 1,
-           let only = pending.first, calendar.isDate(only.startDate, inSameDayAs: wanted) {
+           let only = pending.first, calendar.isDate(only.startDate, inSameDayAs: wanted),
+           // A legacy reminder on the right day is still replaced once, so it
+           // gains the marker rather than waiting for the next re-sign.
+           SigningReminder.isMarked(url: only.url) {
             return false
         }
 
@@ -363,6 +520,7 @@ final class CalendarService {
         event.calendar = blockeyCalendar
         event.title = SigningReminder.title
         event.isAllDay = true
+        event.url = SigningReminder.markerURL
         event.startDate = day
         event.endDate = day
         event.notes = SigningReminder.notes(expiry: expiry)

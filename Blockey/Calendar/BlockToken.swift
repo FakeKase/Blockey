@@ -24,13 +24,42 @@ struct BlockToken: Equatable, Sendable {
     private static let host = "block"
 
     var id: UUID
-    var category: BlockCategory
+    /// The slug exactly as stored in `c=`, NFC-normalised, or nil when there is no usable
+    /// one. This, not `category`, is the source of truth: `BlockCategory` is a closed enum,
+    /// so a slug the app doesn't know (a custom category, or text typed into Calendar.app)
+    /// would otherwise collapse to the fallback here and be rewritten as that fallback on
+    /// the next Save, losing the original for good.
+    var categorySlug: String?
     var sourceTaskID: UUID?
+    /// Query items we don't own, in the order they appeared. Written back untouched so a
+    /// token edited in Calendar.app, or by a newer build, isn't stripped by an older one.
+    private(set) var unknownQueryItems: [URLQueryItem]
+
+    /// What the slug resolves to today. Reading is lossy by design (unknown means
+    /// `.fallback`); setting is an explicit choice and replaces the slug.
+    var category: BlockCategory {
+        get { categorySlug.flatMap(BlockCategory.init(rawValue:)) ?? .fallback }
+        set { categorySlug = newValue.rawValue }
+    }
 
     init(id: UUID = UUID(), category: BlockCategory = .fallback, sourceTaskID: UUID? = nil) {
+        self.init(id: id, categorySlug: category.rawValue, sourceTaskID: sourceTaskID)
+    }
+
+    init(id: UUID = UUID(), categorySlug: String?, sourceTaskID: UUID? = nil) {
         self.id = id
-        self.category = category
+        self.categorySlug = Self.clean(categorySlug)
         self.sourceTaskID = sourceTaskID
+        self.unknownQueryItems = []
+    }
+
+    /// NFC so the same Thai text typed on two keyboards (or round-tripped through a
+    /// client that decomposes) compares equal. Blank means absent: an empty `c=` carries
+    /// no information and shouldn't be written back as if it did. Case is kept, since
+    /// slugs are case-sensitive.
+    private static func clean(_ raw: String?) -> String? {
+        guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return raw.precomposedStringWithCanonicalMapping
     }
 
     /// Parses a token, returning nil for anything that is not ours — including
@@ -52,21 +81,30 @@ struct BlockToken: Equatable, Sendable {
         }
 
         self.id = id
-        self.category = value("c").flatMap(BlockCategory.init(rawValue:)) ?? .fallback
+        // First `c` wins, even if it is blank: a later duplicate is not a fallback for it.
+        self.categorySlug = Self.clean(value("c"))
         self.sourceTaskID = value("t").flatMap(UUID.init(uuidString:))
+        self.unknownQueryItems = items.filter { $0.name != "c" && $0.name != "t" }
     }
 
-    var url: URL {
+    /// Nil only if URLComponents refuses the parts, which the fixed scheme, host and UUID path
+    /// make effectively impossible. Optional rather than a placeholder url because a wrong url
+    /// written to an event would destroy the id, category and task link, which is worse than
+    /// writing nothing: callers leave the event's existing url alone on nil.
+    var url: URL? {
         var components = URLComponents()
         components.scheme = Self.scheme
         components.host = Self.host
         components.path = "/\(id.uuidString)"
-        var items = [URLQueryItem(name: "c", value: category.rawValue)]
+        var items: [URLQueryItem] = []
+        if let categorySlug {
+            items.append(URLQueryItem(name: "c", value: categorySlug))
+        }
         if let sourceTaskID {
             items.append(URLQueryItem(name: "t", value: sourceTaskID.uuidString))
         }
-        components.queryItems = items
-        // The components above are all well-formed by construction.
-        return components.url ?? URL(string: "\(Self.scheme)://\(Self.host)/\(id.uuidString)")!
+        items += unknownQueryItems
+        components.queryItems = items.isEmpty ? nil : items
+        return components.url
     }
 }

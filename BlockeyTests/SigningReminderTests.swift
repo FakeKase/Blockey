@@ -102,4 +102,95 @@ struct SigningReminderTests {
         #expect(notes.lowercased().contains("run"))
         #expect(notes.lowercased().contains("backup"))
     }
+
+    // MARK: - Recognising our own reminder
+
+    private let marker = URL(string: "blockey://signing-reminder")
+
+    /// The bug behind issue #5: cleanup matched on title alone, so a timed block the
+    /// user happened to call "Re-sign Blockey" was deleted along with the stale reminder.
+    @Test("A timed user block with the same title is not the reminder")
+    func timedBlockWithSameTitle() {
+        #expect(!SigningReminder.isReminder(title: SigningReminder.title, isAllDay: false, url: nil))
+    }
+
+    @Test("A block carrying a real token is not the reminder, even if all-day with the same title")
+    func tokenedBlockWithSameTitle() {
+        let url = BlockToken(category: .fallback).url
+        #expect(!SigningReminder.isReminder(title: SigningReminder.title, isAllDay: false, url: url))
+        #expect(!SigningReminder.isReminder(title: SigningReminder.title, isAllDay: true, url: url))
+    }
+
+    @Test("The marker url identifies the reminder")
+    func markerMatches() {
+        #expect(SigningReminder.isReminder(title: nil, isAllDay: true, url: marker))
+        // A user retitling it in Calendar.app must not orphan it.
+        #expect(SigningReminder.isReminder(title: "renamed", isAllDay: true, url: marker))
+    }
+
+    /// Reminders written before the marker existed are all-day with this exact title.
+    @Test("An unmarked all-day event with the exact title is a legacy reminder")
+    func legacyShape() {
+        #expect(SigningReminder.isReminder(title: SigningReminder.title, isAllDay: true, url: nil))
+        #expect(!SigningReminder.isReminder(title: "re-sign blockey", isAllDay: true, url: nil))
+        #expect(!SigningReminder.isReminder(title: "Something else", isAllDay: true, url: nil))
+    }
+
+    @Test("The marker is matched case-insensitively in scheme and host")
+    func markerCaseInsensitive() {
+        let shouted = URL(string: "BLOCKEY://Signing-Reminder")
+        #expect(SigningReminder.isReminder(title: nil, isAllDay: true, url: shouted))
+    }
+
+    @Test("The marker never parses as a block token")
+    func markerIsNotAToken() {
+        #expect(BlockToken(url: marker) == nil)
+        #expect(BlockToken(url: SigningReminder.markerURL) == nil)
+        #expect(SigningReminder.markerURL == marker)
+    }
+
+    // MARK: - QA: edges of the predicate
+
+    @Test("Title variants of an unmarked all-day event are not the reminder")
+    func titleVariantsNotMatched() {
+        for t in ["Re-sign Blockey ", " Re-sign Blockey", "RE-SIGN BLOCKEY", "Re-sign Blockey (copy)", ""] {
+            #expect(!SigningReminder.isReminder(title: t, isAllDay: true, url: nil), "\(t)")
+        }
+        #expect(!SigningReminder.isReminder(title: nil, isAllDay: true, url: nil))
+    }
+
+    @Test("A marker with a path or query is still the reminder")
+    func markerWithExtras() {
+        for raw in ["blockey://signing-reminder/x", "blockey://signing-reminder?v=2"] {
+            #expect(SigningReminder.isReminder(title: nil, isAllDay: true, url: URL(string: raw)), "\(raw)")
+        }
+    }
+
+    @Test("The marker wins even on a timed event, so only the app should ever write it")
+    func markerIgnoresAllDay() {
+        #expect(SigningReminder.isReminder(title: "x", isAllDay: false, url: marker))
+    }
+
+    @Test("A timed event with a foreign url and the exact title is not the reminder")
+    func timedForeignURL() {
+        let url = URL(string: "https://example.com")
+        #expect(!SigningReminder.isReminder(title: SigningReminder.title, isAllDay: false, url: url))
+    }
+
+    /// QA finding: the doc says the fallback is "all-day, exact title, no url", but the code
+    /// only excludes block tokens, so an all-day user event with a web link is deleted too.
+    @Test("An all-day event with the exact title and a foreign url is not the reminder")
+    func allDayForeignURL() {
+        let url = URL(string: "https://example.com")
+        #expect(!SigningReminder.isReminder(title: SigningReminder.title, isAllDay: true, url: url))
+    }
+
+    @Test("isMarked is true only for the marker url")
+    func isMarkedOnlyForMarker() {
+        #expect(SigningReminder.isMarked(url: marker))
+        #expect(SigningReminder.isMarked(url: URL(string: "BLOCKEY://Signing-Reminder")))
+        #expect(!SigningReminder.isMarked(url: nil))
+        #expect(!SigningReminder.isMarked(url: URL(string: "https://example.com")))
+        #expect(!SigningReminder.isMarked(url: BlockToken(category: .fallback).url))
+    }
 }

@@ -539,10 +539,6 @@ struct TodayView: View {
         withAnimation { banner = Banner(text: text, isWarning: warning) }
     }
 
-    private func nextInboxSortIndex() -> Int {
-        (openTasks.map(\.sortIndex).min() ?? 0) - 1
-    }
-
     private func addBlock() {
         let length = TimeInterval(30 * 60)
         let gaps = DaySchedule.gaps(busy: contents.busy, within: plannableWindow, minimumDuration: length)
@@ -560,108 +556,52 @@ struct TodayView: View {
         }
     }
 
+    /// Everything the planner needs to know about the selected day.
+    private var planInputs: DayPlanInputs {
+        DayPlanInputs(date: selectedDate,
+                      now: now,
+                      isToday: isToday,
+                      window: window,
+                      plannableWindow: plannableWindow,
+                      alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil,
+                      calendar: calendar,
+                      hiddenCalendarIDs: hiddenCalendarIDs)
+    }
+
+    private var planner: DayPlanner {
+        DayPlanner(writer: calendars, context: context)
+    }
+
     private func fillDay() {
-        var busy = contents.busy
-        var placed = 0
-        var failed = 0
-
-        for task in openTasks {
-            let gaps = DaySchedule.gaps(busy: busy, within: plannableWindow, minimumDuration: task.duration)
-            guard let slot = DaySchedule.firstFit(duration: task.duration, in: gaps) else { continue }
-            do {
-                try calendars.createBlock(title: task.title,
-                                          range: slot,
-                                          category: task.category,
-                                          sourceTaskID: task.id,
-                                          alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
-                busy.append(slot)
-                context.delete(task)
-                placed += 1
-            } catch {
-                // Keep going: one unwritable event should not strand the rest.
-                failed += 1
-            }
-        }
-
+        let result = planner.fillDay(inputs: planInputs, openTasks: openTasks)
         reload()
-        if failed > 0 {
-            show("Placed \(placed), but \(failed) couldn’t be saved to your calendar.", warning: true)
-        } else {
-            show(placed == 0 ? "Nothing fits in the time you have left" : "Placed \(placed) task\(placed == 1 ? "" : "s")",
-                 warning: placed == 0)
-        }
+        showPlan(result.message)
     }
 
     private func place(_ task: TaskItem?, at start: Date) {
         guard let task else { return }
         do {
-            try calendars.createBlock(title: task.title,
-                                      range: TimeRange(start: start, duration: task.duration),
-                                      category: task.category,
-                                      sourceTaskID: task.id,
-                                      alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
-            // The inbox holds only unscheduled work, so a placed task leaves it.
-            // Unscheduling recreates it — symmetric, and there is never a task
-            // and a block representing the same thing at once.
-            context.delete(task)
+            let result = try planner.place(task, at: start, inputs: planInputs)
             disarm()
             reload()
-            show("Blocked \(start.formatted(date: .omitted, time: .shortened))")
+            showPlan(result.message)
         } catch {
             show(error.localizedDescription, warning: true)
         }
     }
 
     private func returnToInbox(_ block: Block) {
-        // Delete first. Inserting the task up front would leave the same thing
-        // in the inbox *and* on the calendar if the delete failed.
         do {
-            try calendars.delete(block)
+            let result = try planner.returnToInbox(block, openTasks: openTasks)
+            reload()
+            showPlan(result.message)
         } catch {
             show(error.localizedDescription, warning: true)
-            return
         }
-        context.insert(TaskItem(title: block.title,
-                                estimatedMinutes: Int(block.range.duration / 60),
-                                category: block.category,
-                                sortIndex: nextInboxSortIndex()))
-        reload()
-        show("Returned to inbox")
     }
 
-    /// Deletes the day's blocks, putting anything that came from the inbox back.
-    ///
-    /// Blocks carry their source task in the token, which is what makes this
-    /// non-destructive for work the user typed: template-stamped blocks have no
-    /// source and simply go, while placed tasks return to where they came from.
-    /// What clearing a day actually did: how much came back, and how much could
-    /// not. `nil` when the clear itself failed.
-    private struct ClearOutcome {
-        let returned: Int
-        let lost: Int
-    }
-
-    private func clearBlocks() -> ClearOutcome? {
-        do {
-            let removed = try calendars.deleteAllBlocks(on: selectedDate, calendar: calendar)
-            var index = nextInboxSortIndex()
-            var returned = 0
-            for block in removed where block.token?.sourceTaskID != nil {
-                context.insert(TaskItem(title: block.title,
-                                        estimatedMinutes: Int(block.range.duration / 60),
-                                        category: block.category,
-                                        sortIndex: index))
-                index -= 1
-                returned += 1
-            }
-            // Counted from what was deleted, not from `contents`: the view's
-            // copy leaves out declined and cancelled events, which are deleted
-            // all the same, and it can be a fetch behind the store.
-            return ClearOutcome(returned: returned, lost: removed.filter { $0.token == nil }.count)
-        } catch {
-            show(error.localizedDescription, warning: true)
-            return nil
-        }
+    private func showPlan(_ message: PlanMessage) {
+        show(message.text, warning: message.isWarning)
     }
 
     /// Asks the calendar to remind the user to re-sign before this build stops
@@ -676,17 +616,12 @@ struct TodayView: View {
     }
 
     private func clearDay() {
-        guard let outcome = clearBlocks() else { return }
-        reload()
-        switch (outcome.returned, outcome.lost) {
-        case (0, 0):
-            show("Day cleared")
-        case (let back, 0):
-            show("Day cleared · \(back) back in the inbox")
-        case (0, let gone):
-            show("Day cleared · \(gone) could not be returned", warning: true)
-        case (let back, let gone):
-            show("Day cleared · \(back) back in the inbox, \(gone) lost", warning: true)
+        do {
+            let result = try planner.clear(inputs: planInputs, openTasks: openTasks)
+            reload()
+            showPlan(result.message)
+        } catch {
+            show(error.localizedDescription, warning: true)
         }
     }
 
@@ -706,65 +641,24 @@ struct TodayView: View {
     }
 
     private func replaceWithTemplate() {
-        guard let outcome = clearBlocks() else { return }
-        reload()
-        // Carried into the stamp banner, which would otherwise overwrite any
-        // mention of blocks that could not be returned to the inbox.
-        applyTemplate(afterClearing: outcome)
+        guard let template = templateForToday else { return }
+        do {
+            let result = try planner.replace(with: StampTemplate(template),
+                                             inputs: planInputs,
+                                             openTasks: openTasks)
+            reload()
+            showPlan(result.message)
+        } catch {
+            show(error.localizedDescription, warning: true)
+        }
     }
 
-    private func applyTemplate(afterClearing cleared: ClearOutcome? = nil) {
+    private func applyTemplate() {
         guard let template = templateForToday else { return }
-        // The floor, not a narrowed window: the stamper widens its window back
-        // out to cover each row's intended time, so passing `plannableWindow`
-        // here would be undone a few lines into `stamp`. Only `notBefore`
-        // survives that widening. Nil on any day but today, which leaves
-        // stamping a past or future day exactly as it was.
-        let result = TemplateStamper.stamp(items: template.stampItems,
-                                           on: selectedDate,
-                                           busy: contents.busy,
-                                           window: window,
-                                           notBefore: isToday ? now : nil,
-                                           calendar: calendar)
-
-        var created = 0
-        var failures: [TemplateStamper.Item] = []
-
-        for (item, range) in result.scheduled {
-            do {
-                try calendars.createBlock(title: item.title,
-                                          range: range,
-                                          category: template.category(forRowID: item.id),
-                                          alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
-                created += 1
-            } catch {
-                // Carry on rather than break: stopping here used to strand the
-                // remaining rows in neither the calendar nor the inbox.
-                failures.append(item)
-            }
-        }
-
-        // Anything that did not fit — or could not be written — becomes an
-        // inbox task rather than vanishing.
-        var index = nextInboxSortIndex()
-        for item in result.unplaced + failures {
-            context.insert(TaskItem(title: item.title,
-                                    estimatedMinutes: item.durationMinutes,
-                                    category: template.category(forRowID: item.id),
-                                    sortIndex: index,
-                                    droppedFromTemplate: true))
-            index -= 1
-        }
-
+        let result = planner.stamp(StampTemplate(template),
+                                   inputs: planInputs,
+                                   openTasks: openTasks)
         reload()
-
-        var message = "Stamped \(created) block\(created == 1 ? "" : "s")"
-        if result.movedCount > 0 { message += " · \(result.movedCount) moved to fit" }
-        let toInbox = result.unplaced.count + failures.count
-        if toInbox > 0 { message += " · \(toInbox) to inbox" }
-        if !failures.isEmpty { message += " (\(failures.count) couldn’t be saved)" }
-        let lost = cleared?.lost ?? 0
-        if lost > 0 { message += " · \(lost) lost" }
-        show(message, warning: toInbox > 0 || lost > 0)
+        showPlan(result.message)
     }
 }

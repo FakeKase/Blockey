@@ -91,3 +91,17 @@ let it lapse; it is a fence at the top of the cliff, not an ambulance.
 **Unverified.** The reminder has not yet fired on the real device — that takes a full seven-day cycle.
 The date logic is tested, the write is not observable in the simulator (no profile), so the first real
 proof arrives with the next expiry.
+
+## Amendment, 2026-11-03 (issue #5)
+
+The reminder was found again by title alone, so cleanup could delete a user's own timed block named
+`Re-sign Blockey`. It now carries the marker url `blockey://signing-reminder` and is matched by
+`SigningReminder.isReminder`: the marker first, with all-day plus the exact title kept as a fallback
+for reminders written before the marker. The marker's host is not `block`, so `BlockToken` ignores it.
+
+The fallback requires no url at all, so an all-day event with this title and a foreign url (a meeting
+link, say) is left alone. Legacy reminders are upgraded on the next launch: one on the right day is
+replaced once with a marked copy instead of being left as it was.
+
+Accepted residual risk: an unmarked all-day event with exactly this title and no url, in the Blockey
+calendar and within 60 days, is indistinguishable from a legacy reminder and will be replaced.
