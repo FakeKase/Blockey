@@ -362,10 +362,15 @@ final class CalendarService {
         let pending = store.events(matching: store.predicateForEvents(withStart: calendar.startOfDay(for: now),
                                                                       end: searchEnd,
                                                                       calendars: [blockeyCalendar]))
-            .filter { $0.title == SigningReminder.title }
+            // Never by title alone: a timed block the user named the same would be
+            // deleted. See `SigningReminder.isReminder`.
+            .filter { SigningReminder.isReminder(title: $0.title, isAllDay: $0.isAllDay, url: $0.url) }
 
         if let wanted, pending.count == 1,
-           let only = pending.first, calendar.isDate(only.startDate, inSameDayAs: wanted) {
+           let only = pending.first, calendar.isDate(only.startDate, inSameDayAs: wanted),
+           // A legacy reminder on the right day is still replaced once, so it
+           // gains the marker rather than waiting for the next re-sign.
+           SigningReminder.isMarked(url: only.url) {
             return false
         }
 
@@ -387,6 +392,7 @@ final class CalendarService {
         event.calendar = blockeyCalendar
         event.title = SigningReminder.title
         event.isAllDay = true
+        event.url = SigningReminder.markerURL
         event.startDate = day
         event.endDate = day
         event.notes = SigningReminder.notes(expiry: expiry)
