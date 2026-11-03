@@ -75,9 +75,10 @@ struct DayPlannerEquivalenceTests {
 
         #expect(result.cleared?.lost == 1)
         #expect(result.failures.count == 1)
-        #expect(result.message.isWarning)
-        #expect(result.message.text.hasSuffix("\u{00B7} 1 lost"))
-        #expect(result.message.text.contains("(1 couldn\u{2019}t be saved)"))
+        let message = result.message(day: "today")
+        #expect(message.isWarning)
+        #expect(message.text.hasSuffix("1 block could not be returned and was deleted."))
+        #expect(message.text.contains("1 couldn\u{2019}t be saved to your calendar and is in your inbox."))
     }
 
     @Test("Replace on today applies notBefore, so the stamp never lands in elapsed hours")

@@ -18,6 +18,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.hiddenCalendarIDs) private var hiddenCalendarsRaw = ""
     @AppStorage(SettingsKey.alarmEnabled) private var alarmEnabled = false
     @AppStorage(SettingsKey.alarmMinutesBefore) private var alarmMinutesBefore = 5
+    @AppStorage(SettingsKey.skipPlanPreview) private var skipPlanPreview = false
 
     private var hiddenIDs: Set<String> {
         Set(hiddenCalendarsRaw.split(separator: "\n").map(String.init))
@@ -43,6 +44,12 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Skip preview", isOn: $skipPlanPreview)
+                } footer: {
+                    Text("Add your template with one tap, without checking the plan first. You can undo it. Days that already have blocks always show the preview.")
+                }
+
+                Section {
                     Toggle("Alert at block start", isOn: $alarmEnabled)
                     if alarmEnabled {
                         Stepper(alarmMinutesBefore == 0 ? "At start time" : "\(alarmMinutesBefore) min before",
@@ -51,7 +58,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Alerts")
                 } footer: {
-                    Text("Alerts are set on the calendar event itself, so they fire through Calendar — no extra notification permission needed.")
+                    Text("Alerts are set on the calendar event itself, so they fire through Calendar, so no extra notification permission needed.")
                 }
 
                 Section {
@@ -99,7 +106,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Backup")
                 } footer: {
-                    Text("Your blocks are already safe in Calendar. Tasks and templates live only on this phone — they survive reinstalling Blockey, but not deleting it.")
+                    Text("Your blocks are already safe in Calendar. Tasks and templates live only on this phone. They survive reinstalling Blockey, but not deleting it.")
                 }
             }
             .navigationTitle("Settings")

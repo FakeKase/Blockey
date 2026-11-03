@@ -24,6 +24,13 @@ struct BlockeyBackup: Codable {
         var estimatedMinutes: Int
         var category: String
         var sortIndex: Int
+        /// Optional so a backup written before this field existed still decodes. Present only
+        /// for a task that fell out of a template; restoring it also restores the "from
+        /// Workday" note in the inbox.
+        var droppedFromTemplateName: String?
+        /// Independent of the name, because a task made before names existed was dropped but
+        /// has none. Optional so older backups still decode.
+        var droppedFromTemplate: Bool?
     }
 
     struct Template: Codable {
@@ -54,7 +61,9 @@ struct BlockeyBackup: Codable {
             Task(title: $0.title,
                  estimatedMinutes: $0.estimatedMinutes,
                  category: $0.categoryRaw,
-                 sortIndex: $0.sortIndex)
+                 sortIndex: $0.sortIndex,
+                 droppedFromTemplateName: $0.droppedFromTemplate ? $0.droppedFromTemplateName : nil,
+                 droppedFromTemplate: $0.droppedFromTemplate)
         }
 
         let templates = try context.fetch(FetchDescriptor<DayTemplate>())
@@ -92,7 +101,9 @@ struct BlockeyBackup: Codable {
             context.insert(TaskItem(title: task.title,
                                     estimatedMinutes: task.estimatedMinutes,
                                     categoryRaw: task.category,
-                                    sortIndex: task.sortIndex))
+                                    sortIndex: task.sortIndex,
+                                    droppedFromTemplate: task.droppedFromTemplate ?? (task.droppedFromTemplateName != nil),
+                                    droppedFromTemplateName: task.droppedFromTemplateName))
         }
 
         // Templates keep their identifiers so weekday assignments still resolve.

@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 /// The whole app, really: one day, what is fixed, what you have blocked, and
-/// the two actions that fill the rest — stamp a template, place a task.
+/// the two actions that fill the rest: add a template ("Add my Workday"), place a task.
 struct TodayView: View {
     @Environment(CalendarService.self) private var calendars
     @Environment(\.modelContext) private var context
@@ -18,6 +18,11 @@ struct TodayView: View {
     @AppStorage(SettingsKey.hiddenCalendarIDs) private var hiddenCalendarsRaw = ""
     @AppStorage(SettingsKey.alarmEnabled) private var alarmEnabled = false
     @AppStorage(SettingsKey.alarmMinutesBefore) private var alarmMinutesBefore = 5
+    @AppStorage(SettingsKey.skipPlanPreview) private var skipPlanPreview = false
+    @AppStorage(SettingsKey.hasSeededTemplates) private var hasSeededTemplates = false
+    @AppStorage(SettingsKey.hasSeenStarterTemplatesNote) private var hasSeenStarterNote = false
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverRunning
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     @State private var selectedDate = Date()
     @State private var contents = DayContents()
@@ -25,9 +30,13 @@ struct TodayView: View {
     @State private var selectedBlock: Block?
     @State private var sheet: Sheet?
     @State private var inboxDetent: PresentationDetent = .medium
-    @State private var banner: Banner?
+    @State private var banner: PlanBanner?
+    /// Held while the plan sheet dismisses, then shown, so the sheet's own animation does not
+    /// swallow the first moments of a message the user needs to read.
+    @State private var pendingBanner: PlanBanner?
+    /// The preview the plan sheet opens with.
+    @State private var planDraft: StampPreview?
     @State private var now = Date()
-    @State private var isConfirmingRestamp = false
     @State private var isConfirmingClear = false
 
     private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -37,14 +46,15 @@ struct TodayView: View {
     private static let armedDetent = PresentationDetent.height(112)
 
     private enum Sheet: String, Identifiable {
-        case inbox, templates, settings
+        case inbox, templates, settings, plan
         var id: String { rawValue }
     }
 
-    private struct Banner: Identifiable, Equatable {
-        let id = UUID()
-        let text: String
-        var isWarning = false
+    /// What the banner timer is waiting on. A new key restarts the wait, which is how pausing
+    /// (and resuming with a full lifetime) works.
+    private struct BannerTimerKey: Hashable {
+        let id: UUID?
+        let isPaused: Bool
     }
 
     // MARK: Derived state
@@ -68,29 +78,21 @@ struct TodayView: View {
     /// Blocks whose token is gone, so Blockey can no longer tell whether they
     /// came from a task. Theirs is the one case "back to the inbox" cannot
     /// honour, and the only way work is lost for good.
+    ///
+    /// Only blocks the clear will actually delete count: a block Blockey cannot edit survives it.
     private var untaggedBlocks: Int {
-        contents.blocks.filter { $0.token == nil }.count
+        contents.blocks.filter { $0.isEditable && $0.token == nil }.count
+    }
+
+    /// What "Clear the day" deletes. Blocks Blockey cannot edit survive it, so they are not counted.
+    private var editableBlockCount: Int {
+        contents.blocks.filter(\.isEditable).count
     }
 
     private var clearWarning: String {
         let promise = "Anything you placed from the inbox goes back to the inbox."
         guard untaggedBlocks > 0 else { return promise }
-        return promise + " " + untaggedLossSentence
-    }
-
-    /// Replacing clears the day first, so it carries the same risk and says so.
-    private var restampWarning: String {
-        let base = "Replacing clears every block on \(weekdayName) \u{2014} including ones you placed by hand \u{2014} and stamps the template fresh. Adding keeps them and plans around them."
-        guard untaggedBlocks > 0 else { return base }
-        return base + " " + untaggedLossSentence
-    }
-
-    /// Said wherever blocks are about to be deleted: a block with no token
-    /// cannot be traced back to a task, so it cannot be put back.
-    private var untaggedLossSentence: String {
-        untaggedBlocks == 1
-            ? "One block has lost its Blockey tag, so it cannot be returned \u{2014} this deletes it for good."
-            : "\(untaggedBlocks) blocks have lost their Blockey tag, so they cannot be returned \u{2014} this deletes them for good."
+        return promise + " " + PlanCopy.untaggedLoss(count: untaggedBlocks)
     }
 
     private var visibleRange: TimeRange {
@@ -140,6 +142,37 @@ struct TodayView: View {
         selectedDate.formatted(.dateTime.weekday(.wide))
     }
 
+    /// "today", "tomorrow" or "Monday", for use after "for".
+    private var dayPhrase: String {
+        StampPreview.dayPhrase(for: selectedDate, now: now, calendar: calendar)
+    }
+
+    /// Whether a banner timer should hold still: under VoiceOver (the banner stays until it is
+    /// dismissed), and while a sheet other than the inbox covers the banner (Q7). The inbox
+    /// shows its own copy, so it does not pause.
+    private var isBannerTimerPaused: Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        if DemoScenario.holdsBanner { return true }
+        #endif
+        return voiceOverRunning || selectedBlock != nil || (sheet != nil && sheet != .inbox)
+    }
+
+    /// The first-launch card: only for people who were handed the sample templates and have
+    /// not answered it, while Workday still exists to be shown.
+    private var showsStarterCard: Bool {
+        hasSeededTemplates && !hasSeenStarterNote && armedTask == nil
+            && templates.contains { $0.name == "Workday" }
+    }
+
+    /// Whether Fill day would place anything. First-fit goes task by task, so if no task fits
+    /// on its own against the day as it stands, none fits at all.
+    private var fillFitCount: Int {
+        openTasks.filter { task in
+            !DaySchedule.gaps(busy: contents.busy, within: plannableWindow,
+                              minimumDuration: task.duration).isEmpty
+        }.count
+    }
+
     // MARK: Body
 
     var body: some View {
@@ -153,7 +186,7 @@ struct TodayView: View {
                 // room for the bar, instead of hiding the last hour behind it.
                 .safeAreaInset(edge: .bottom, spacing: 0) { actionArea }
         }
-        .sheet(item: $sheet) { destination in
+        .sheet(item: $sheet, onDismiss: showPendingBanner) { destination in
             switch destination {
             case .inbox:
                 InboxTray(
@@ -165,7 +198,15 @@ struct TodayView: View {
                         // pass, and the timeline stays reachable behind it.
                         withAnimation { inboxDetent = Self.armedDetent }
                     },
-                    onFillDay: fillDay
+                    onFillDay: fillDay,
+                    banner: banner,
+                    onUndo: undoBanner,
+                    onDismissBanner: dismissBanner,
+                    isCompact: inboxDetent == Self.armedDetent,
+                    placeAllTitle: PlanCopy.placeAllTitle(count: openTasks.count, fitting: fillFitCount,
+                                                          dayPhrase: dayPhrase),
+                    canFill: fillFitCount > 0,
+                    fillReason: PlanCopy.placeAllReason(isToday: isToday, dayPhrase: dayPhrase)
                 )
                 .presentationDetents([Self.armedDetent, .medium, .large], selection: $inboxDetent)
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
@@ -173,6 +214,23 @@ struct TodayView: View {
                 TemplatesView()
             case .settings:
                 SettingsView()
+            case .plan:
+                if let draft = planDraft {
+                    PlanSheet(initial: draft,
+                              template: templateForToday.map { StampTemplate($0) },
+                              inputs: planInputs,
+                              openTasks: openTasks,
+                              ownBlocks: contents.blocks,
+                              onWritten: { result in
+                                  reload()
+                                  // The starter card's job ("add it with one tap") is done.
+                                  hasSeenStarterNote = true
+                                  pendingBanner = stampBanner(result)
+                                  sheet = nil
+                              },
+                              onEditTemplate: { sheet = .templates },
+                              onTryTomorrow: { shiftDay(1) })
+                }
             }
         }
         .sheet(item: $selectedBlock) { block in
@@ -186,14 +244,7 @@ struct TodayView: View {
             )
             .presentationDetents([.medium])
         }
-        .confirmationDialog(restampTitle, isPresented: $isConfirmingRestamp, titleVisibility: .visible) {
-            Button("Replace with the template", role: .destructive) { replaceWithTemplate() }
-            Button("Add the template on top") { applyTemplate() }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text(restampWarning)
-        }
-        .confirmationDialog("Clear \(contents.blocks.count) block\(contents.blocks.count == 1 ? "" : "s")?",
+        .confirmationDialog("Clear \(editableBlockCount) block\(editableBlockCount == 1 ? "" : "s")?",
                             isPresented: $isConfirmingClear, titleVisibility: .visible) {
             Button("Clear the day", role: .destructive) { clearDay() }
             Button("Cancel", role: .cancel) { }
@@ -213,9 +264,29 @@ struct TodayView: View {
             #if DEBUG && targetEnvironment(simulator)
             if DemoScenario.shouldStamp {
                 try? await _Concurrency.Task.sleep(for: .milliseconds(600))
-                stampTemplate()
+                demoStamp()
+            }
+            if DemoScenario.wantsPlanSheet {
+                // The template query has not landed yet on a cold launch without `-blockeyStamp`.
+                try? await _Concurrency.Task.sleep(for: .milliseconds(600))
+                demoOpenPlanSheet()
+            }
+            if DemoScenario.wantsInbox {
+                inboxDetent = .medium
+                sheet = .inbox
             }
             #endif
+        }
+        // Once per banner id. Announcing from the banner view would repeat it whenever the
+        // inbox tray, which shows a copy, opens.
+        .onChange(of: banner?.id) { _, _ in
+            if let banner { AccessibilityNotification.Announcement(banner.text).post() }
+        }
+        .task(id: BannerTimerKey(id: banner?.id, isPaused: isBannerTimerPaused)) {
+            guard let current = banner, !isBannerTimerPaused else { return }
+            try? await _Concurrency.Task.sleep(for: .seconds(current.lifetime))
+            guard !_Concurrency.Task.isCancelled else { return }
+            withAnimation { if banner?.id == current.id { banner = nil } }
         }
         .onChange(of: selectedDate) { _, _ in reload() }
         .onChange(of: calendars.revision) { _, _ in reload() }
@@ -225,11 +296,6 @@ struct TodayView: View {
             #endif
             now = tick
         }
-    }
-
-    private var restampTitle: String {
-        let count = contents.blocks.count
-        return "\(weekdayName) already has \(count) block\(count == 1 ? "" : "s")"
     }
 
     // MARK: Header
@@ -251,7 +317,7 @@ struct TodayView: View {
                     Text(summaryLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
                 }
                 Spacer()
 
@@ -288,7 +354,7 @@ struct TodayView: View {
             : "\(Int(free / 60)) min free"
 
         if contents.blocks.isEmpty, !contents.fixed.isEmpty, let template = templateForToday {
-            return "Your meetings are in. Stamp “\(template.name)” to fill the rest."
+            return "Your meetings are in. Add your \(template.name) to fill the rest."
         }
         if contents.blocks.isEmpty {
             return "Nothing blocked · \(freeText)"
@@ -343,10 +409,13 @@ struct TodayView: View {
                 if let template = templateForToday {
                     Text("Nothing planned yet")
                         .font(.headline)
-                    Text("Stamp “\(template.name)” to lay down your usual day, then drop anything else into the gaps.")
+                    Text("Add your \(template.name) for a ready-made day, then drop anything else into the gaps.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                    Button("See what\u{2019}s in \(template.name)") { sheet = .templates }
+                        .buttonStyle(.bordered)
+                        .padding(.top, 2)
                 } else {
                     Text("No template for \(weekdayName)s yet")
                         .font(.headline)
@@ -356,7 +425,6 @@ struct TodayView: View {
                         .multilineTextAlignment(.center)
                     Button("Set up a template") { sheet = .templates }
                         .buttonStyle(.bordered)
-                        .controlSize(.small)
                         .padding(.top, 2)
                 }
             }
@@ -364,7 +432,6 @@ struct TodayView: View {
             .frame(maxWidth: 320)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
             .padding(.horizontal, 28)
-            .allowsHitTesting(templateForToday == nil)
         }
     }
 
@@ -372,7 +439,9 @@ struct TodayView: View {
 
     private var actionArea: some View {
         VStack(spacing: 8) {
-            bannerView
+            if showsStarterCard { starterCard }
+            // The inbox tray shows its own copy, so VoiceOver never meets two Undo buttons.
+            if sheet != .inbox { bannerView }
             if let armedTask {
                 armedBar(for: armedTask)
             } else {
@@ -419,13 +488,19 @@ struct TodayView: View {
     }
 
     private var defaultBar: some View {
-        HStack(spacing: 10) {
+        // Stacked at accessibility sizes, where the two buttons cannot share a line.
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 10))
+            : AnyLayout(HStackLayout(spacing: 10))
+        return layout {
             Button {
-                stampTemplate()
+                addTemplate()
             } label: {
-                Label(templateForToday.map { "Stamp “\($0.name)”" } ?? "Set up a template",
+                Label(templateForToday.map { "Add my \($0.name)" } ?? "Set up a template",
                       systemImage: "square.stack.3d.up.fill")
                     .font(.subheadline.weight(.medium))
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                    .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -444,39 +519,44 @@ struct TodayView: View {
         .controlSize(.large)
     }
 
-    /// Material-backed with a semantic tint rather than white-on-orange, which
-    /// measured 2.08:1 — unreadable at a glance, and a glance is all a banner gets.
     @ViewBuilder
     private var bannerView: some View {
         if let banner {
-            HStack(spacing: 7) {
-                Group {
-                    if Emoji.isSupported {
-                        Text(banner.isWarning ? "\u{26A0}\u{FE0F}" : "\u{2705}")
-                    } else {
-                        Image(systemName: banner.isWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    }
+            PlanBannerView(banner: banner,
+                           onUndo: undoBanner,
+                           onDismiss: dismissBanner,
+                           onAction: { openInboxFromBanner() })
+        }
+    }
+
+    private var starterCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("We added a sample Workday for Mon\u{2013}Fri.")
+                .font(.subheadline.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            Text("Add it to a day with one tap. Change it any time.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Button("Keep") { hasSeenStarterNote = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .accessibilityHint("Hides this note")
+                Button("Edit") {
+                    hasSeenStarterNote = true
+                    // The list, not the Workday editor (Q4): the editor needs a navigation
+                    // push the sheet cannot be handed yet.
+                    sheet = .templates
                 }
-                .font(.caption)
-                Text(banner.text)
-                    .font(.footnote.weight(.medium))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(banner.isWarning ? Color.orange : Color.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .onTapGesture { withAnimation { self.banner = nil } }
-            .task(id: banner.id) {
-                // Warnings linger: an error that disappears in 2.6 seconds may
-                // as well not have been shown.
-                try? await _Concurrency.Task.sleep(for: .seconds(banner.isWarning ? 7 : 2.6))
-                withAnimation { self.banner = nil }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityHint("Opens your templates")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     @ToolbarContentBuilder
@@ -536,7 +616,54 @@ struct TodayView: View {
     }
 
     private func show(_ text: String, warning: Bool = false) {
-        withAnimation { banner = Banner(text: text, isWarning: warning) }
+        withAnimation { banner = PlanBanner(text: text, isWarning: warning) }
+    }
+
+    private func dismissBanner() {
+        withAnimation { banner = nil }
+    }
+
+    private func showPendingBanner() {
+        planDraft = nil
+        guard let pending = pendingBanner else { return }
+        pendingBanner = nil
+        withAnimation { banner = pending }
+    }
+
+    private func openInboxFromBanner() {
+        // The banner stays, and with it any Undo record: the tray shows the same banner
+        // (`withoutAction`), and its timer keeps running because the inbox does not pause it.
+        // At the armed detent the tray hides the banner, so one arriving there can expire
+        // unseen; accepted, since arming is a deliberate move away from the message.
+        inboxDetent = .medium
+        sheet = .inbox
+    }
+
+    /// Reverses what the banner offered to. On failure nothing has changed, so the same
+    /// record goes back on the banner for another try.
+    private func undoBanner() {
+        guard let record = banner?.undo else { return }
+        do {
+            let outcome = try planner.undo(record)
+            reload()
+            let message = outcome.message
+            withAnimation {
+                banner = PlanBanner(text: message.text, isWarning: message.isWarning, afterUndo: true)
+            }
+        } catch {
+            withAnimation {
+                banner = PlanBanner(text: "Couldn\u{2019}t undo. Nothing was changed. Try again.",
+                                    isWarning: true, undo: record)
+            }
+        }
+    }
+
+    private func stampBanner(_ result: StampResult) -> PlanBanner {
+        let message = result.message(day: dayPhrase)
+        return PlanBanner(text: message.text,
+                          isWarning: message.isWarning,
+                          undo: result.undo,
+                          action: result.toInbox > 0 ? .openInbox : nil)
     }
 
     private func addBlock() {
@@ -575,7 +702,10 @@ struct TodayView: View {
     private func fillDay() {
         let result = planner.fillDay(inputs: planInputs, openTasks: openTasks)
         reload()
-        showPlan(result.message)
+        withAnimation {
+            banner = PlanBanner(text: result.message.text, isWarning: result.message.isWarning,
+                                undo: result.undo)
+        }
     }
 
     private func place(_ task: TaskItem?, at start: Date) {
@@ -625,40 +755,58 @@ struct TodayView: View {
         }
     }
 
-    private func stampTemplate() {
-        guard templateForToday != nil else {
+    /// "Add my Workday". Opens the plan sheet, except when the user has opted out of the
+    /// preview, the day has none of its own blocks, and something would actually be placed.
+    /// Then it writes at once, still through the confirm-time guard, and a plan that moved
+    /// since the preview opens the sheet instead.
+    private func addTemplate() {
+        guard let template = templateForToday else {
             sheet = .templates
             return
         }
-        // Stamping a planned day would quietly double it, and the second set
-        // lands in whatever gaps are left — which reads as a bug rather than a
-        // second stamp. Make the choice explicit.
-        if !contents.blocks.isEmpty {
-            isConfirmingRestamp = true
-            return
+        let stamp = StampTemplate(template)
+        // One fetch for both, so skipping the sheet is decided from the day the plan was made on.
+        let (preview, hasOwnBlocks) = planner.previewWithOwnBlocks(stamp, inputs: planInputs, mode: .keep)
+
+        if skipPlanPreview, !hasOwnBlocks, preview.confirmCount > 0 {
+            do {
+                switch try planner.stamp(stamp, expecting: preview, mode: .keep,
+                                         inputs: planInputs, openTasks: openTasks) {
+                case .written(let result):
+                    reload()
+                    hasSeenStarterNote = true
+                    withAnimation { banner = stampBanner(result) }
+                    return
+                case .stale(let fresh):
+                    planDraft = fresh
+                    sheet = .plan
+                    return
+                }
+            } catch {
+                show(error.localizedDescription, warning: true)
+                return
+            }
         }
-        applyTemplate()
+        planDraft = preview
+        sheet = .plan
     }
 
-    private func replaceWithTemplate() {
+    #if DEBUG && targetEnvironment(simulator)
+    /// `-blockeyPlanSheet`: opens the sheet as a tap on "Add my Workday" would, for screenshots.
+    private func demoOpenPlanSheet() {
         guard let template = templateForToday else { return }
-        do {
-            let result = try planner.replace(with: StampTemplate(template),
-                                             inputs: planInputs,
-                                             openTasks: openTasks)
-            reload()
-            showPlan(result.message)
-        } catch {
-            show(error.localizedDescription, warning: true)
-        }
+        let mode: StampPreview.Mode = DemoScenario.wantsStartOver ? .startOver : .keep
+        planDraft = planner.preview(StampTemplate(template), inputs: planInputs, mode: mode)
+        sheet = .plan
     }
 
-    private func applyTemplate() {
+    /// The demo's `-blockeyStamp` flag: writes straight away, skipping the sheet, so a
+    /// screenshot run needs no taps.
+    private func demoStamp() {
         guard let template = templateForToday else { return }
-        let result = planner.stamp(StampTemplate(template),
-                                   inputs: planInputs,
-                                   openTasks: openTasks)
+        let result = planner.stamp(StampTemplate(template), inputs: planInputs, openTasks: openTasks)
         reload()
-        showPlan(result.message)
+        withAnimation { banner = stampBanner(result) }
     }
+    #endif
 }

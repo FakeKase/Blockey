@@ -62,7 +62,7 @@ struct DayPlannerTests {
         let items = rows.map { TemplateStamper.Item(title: $0.0, startMinuteOfDay: $0.1, durationMinutes: $0.2) }
         var slugs: [UUID: String] = [:]
         for (item, row) in zip(items, rows) { slugs[item.id] = row.3 }
-        return StampTemplate(items: items, slugs: slugs)
+        return StampTemplate(items: items, slugs: slugs, name: "Test")
     }
 
     private func inbox(_ context: ModelContext) throws -> [TaskItem] {
@@ -82,7 +82,7 @@ struct DayPlannerTests {
         #expect(result.toInbox == 0)
         #expect(rig.writer.created.map(\.slug) == ["deep", "rest"])
         #expect(try inbox(rig.context).isEmpty)
-        #expect(result.message == PlanMessage(text: "Stamped 2 blocks"))
+        #expect(result.message(day: "today") == PlanMessage(text: "Added 2 blocks for today"))
     }
 
     @Test("A row that collides with a fixed event moves, and the message says so")
@@ -97,7 +97,7 @@ struct DayPlannerTests {
         #expect(result.movedCount == 1)
         #expect(result.created[0].range.start == at(10))
         #expect(!result.created[0].range.overlaps(meeting))
-        #expect(result.message == PlanMessage(text: "Stamped 1 block \u{00B7} 1 moved to fit"))
+        #expect(result.message(day: "today") == PlanMessage(text: "Added 1 block for today \u{00B7} 1 moved to fit"))
     }
 
     @Test("A row that cannot fit becomes a droppedFromTemplate task with its slug, in sortIndex order")
@@ -122,7 +122,9 @@ struct DayPlannerTests {
         #expect(dropped.map(\.categoryRaw) == ["telepathy", "rest"])
         #expect(dropped.map(\.estimatedMinutes) == [30, 60])
         #expect(Set(result.insertedTaskIDs) == Set(dropped.map(\.id)))
-        #expect(result.message == PlanMessage(text: "Stamped 0 blocks \u{00B7} 2 to inbox", isWarning: true))
+        #expect(result.message(day: "today") == PlanMessage(
+            text: "No blocks added. 2 didn\u{2019}t fit and are in your inbox.", isWarning: true))
+        #expect(dropped.allSatisfy { $0.droppedFromTemplateName == "Test" })
     }
 
     @Test("A create failure sends the row to the inbox and counts as a failure")
@@ -138,8 +140,9 @@ struct DayPlannerTests {
         #expect(tasks.map(\.title) == ["A"])
         #expect(tasks[0].droppedFromTemplate)
         #expect(tasks[0].categoryRaw == "deep")
-        #expect(result.message == PlanMessage(
-            text: "Stamped 1 block \u{00B7} 1 to inbox (1 couldn\u{2019}t be saved)", isWarning: true))
+        #expect(result.message(day: "today") == PlanMessage(
+            text: "Added 1 block. 1 couldn\u{2019}t be saved to your calendar and is in your inbox.",
+            isWarning: true))
     }
 
     @Test("Unplaced rows come before failed rows in the inbox")
@@ -226,7 +229,8 @@ struct DayPlannerTests {
         #expect(tasks.map(\.title) == ["From inbox"])
         #expect(tasks[0].categoryRaw == "rest")
         #expect(!tasks[0].droppedFromTemplate)
-        #expect(result.message == PlanMessage(text: "Stamped 1 block \u{00B7} 1 lost", isWarning: true))
+        #expect(result.message(day: "today") == PlanMessage(
+            text: "Added 1 block. 1 block could not be returned and was deleted.", isWarning: true))
     }
 
     @Test("Replace stamps against the day after the clear, but fixed events stay busy")
@@ -451,5 +455,105 @@ struct DayPlannerTests {
                                                      completedAt: nil,
                                                      droppedFromTemplate: false)])
         #expect(filled.created[0].token?.sourceTaskID == task.id)
+    }
+}
+
+// MARK: Banner strings and the template name (issue #3, tasks 2.3 to 2.5)
+
+@Suite("StampResult.message(day:) and the dropped-from-template name")
+@MainActor
+struct StampMessageTests {
+
+    private let calendar = Calendar.current
+
+    private func makeContext() throws -> ModelContext {
+        let container = try ModelContainer(
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        return ModelContext(container)
+    }
+
+    /// Today, built from the live calendar so the test holds in any calendar system.
+    private func inputs() -> DayPlanInputs {
+        let start = calendar.startOfDay(for: .now)
+        let window = TimeRange(start: start.addingTimeInterval(7 * 3600), end: start.addingTimeInterval(22 * 3600))
+        return DayPlanInputs(date: start, now: start, isToday: false, window: window,
+                             plannableWindow: window, alarmMinutesBefore: nil, calendar: calendar,
+                             hiddenCalendarIDs: [])
+    }
+
+    private func result(rows: [(String, Int, Int)], busyAllDay: Bool = false,
+                        failCreate: Set<Int> = []) throws -> (StampResult, ModelContext) {
+        let context = try makeContext()
+        let writer = FakeBlockWriter()
+        let input = inputs()
+        if busyAllDay { writer.addFixed("Busy", input.window) }
+        writer.failCreateAtCalls = failCreate
+        let items = rows.map { TemplateStamper.Item(title: $0.0, startMinuteOfDay: $0.1, durationMinutes: $0.2) }
+        let template = StampTemplate(items: items, slugs: [:], name: "Workday")
+        let planner = DayPlanner(writer: writer, context: context)
+        return (planner.stamp(template, inputs: input, openTasks: []), context)
+    }
+
+    @Test("A clean stamp names the day, and mentions moves when every row fit")
+    func cleanMessage() throws {
+        let (clean, _) = try result(rows: [("A", 9 * 60, 60), ("B", 11 * 60, 60)])
+        #expect(clean.message(day: "Monday") == PlanMessage(text: "Added 2 blocks for Monday"))
+        let (one, _) = try result(rows: [("A", 9 * 60, 60)])
+        #expect(one.message(day: "today").text == "Added 1 block for today")
+    }
+
+    @Test("One miss names the task, several miss are counted, both warn")
+    func missMessages() throws {
+        let (all, _) = try result(rows: [("Lunch", 12 * 60, 30)], busyAllDay: true)
+        #expect(all.message(day: "today") == PlanMessage(
+            text: "No blocks added. \u{201C}Lunch\u{201D} is in your inbox.", isWarning: true))
+        let (many, _) = try result(rows: [("A", 9 * 60, 30), ("B", 10 * 60, 30), ("C", 11 * 60, 30)],
+                                   busyAllDay: true)
+        #expect(many.message(day: "today").text == "No blocks added. 3 didn\u{2019}t fit and are in your inbox.")
+    }
+
+    @Test("Save failures are reported separately from rows that did not fit")
+    func failureMessage() throws {
+        let (r, _) = try result(rows: [("A", 9 * 60, 30), ("B", 10 * 60, 30)], failCreate: [0, 1])
+        #expect(r.message(day: "today").text
+                == "No blocks added. 2 couldn\u{2019}t be saved to your calendar and are in your inbox.")
+        #expect(r.message(day: "today").isWarning)
+    }
+
+    @Test("Rows that fall to the inbox remember which template they came from")
+    func inboxTaskRemembersTemplate() throws {
+        let (_, context) = try result(rows: [("Lunch", 12 * 60, 30)], busyAllDay: true)
+        let tasks = try context.fetch(FetchDescriptor<TaskItem>())
+        #expect(tasks.count == 1)
+        #expect(tasks[0].droppedFromTemplate)
+        #expect(tasks[0].droppedFromTemplateName == "Workday")
+    }
+
+    @Test("A snapshot carries the template name through Undo")
+    func snapshotCarriesName() throws {
+        let context = try makeContext()
+        let task = TaskItem(title: "Lunch", droppedFromTemplate: true, droppedFromTemplateName: "Workday")
+        let snapshot = TaskSnapshot(task)
+        #expect(snapshot.droppedFromTemplateName == "Workday")
+        context.insert(task)
+        context.delete(task)
+        #expect(snapshot.restore(into: context))
+        let back = try context.fetch(FetchDescriptor<TaskItem>())
+        #expect(back.first?.droppedFromTemplateName == "Workday")
+    }
+
+    @Test("dayPhrase says today, tomorrow, or the weekday, in lower case only for the first two")
+    func dayPhrase() {
+        // Gregorian on purpose: see StampPreviewTests, the machine's calendar is Buddhist.
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = Locale(identifier: "en_US")
+        let now = Date()
+        let start = cal.startOfDay(for: now)
+        func day(_ offset: Int) -> Date { cal.date(byAdding: .day, value: offset, to: start) ?? start }
+        #expect(StampPreview.dayPhrase(for: day(0), now: now, calendar: cal) == "today")
+        #expect(StampPreview.dayPhrase(for: day(1), now: now, calendar: cal) == "tomorrow")
+        let phrase = StampPreview.dayPhrase(for: day(3), now: now, calendar: cal)
+        #expect(phrase == cal.weekdaySymbols[cal.component(.weekday, from: day(3)) - 1])
     }
 }

@@ -100,7 +100,7 @@ struct StampPreviewTests {
         #expect(lines.count == 3)
         #expect(lines[0] == ("A", "09:00 to 10:00", nil))
         #expect(lines[1] == ("B", "11:00 to 12:00", "moved from 10:00"))
-        #expect(lines[2] == ("C", nil, "no room today"))
+        #expect(lines[2] == ("C", nil, "no room"))
         #expect(preview.confirmCount == 2)
         #expect(!preview.isConfirmDisabled)
         #expect(preview.inboxCount == 1)

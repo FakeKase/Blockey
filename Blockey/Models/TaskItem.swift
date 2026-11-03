@@ -20,13 +20,20 @@ final class TaskItem {
     /// inbox, so the UI can explain why it appeared.
     var droppedFromTemplate: Bool
 
+    /// The template it fell out of, so the inbox can say "from Workday, no room". Optional and
+    /// additive: tasks saved before this existed, and tasks restored from an older backup, have
+    /// none, and the UI falls back to "your template".
+    var droppedFromTemplateName: String?
+
     convenience init(title: String,
                      estimatedMinutes: Int = 30,
                      category: BlockCategory = .deepWork,
                      sortIndex: Int = 0,
-                     droppedFromTemplate: Bool = false) {
+                     droppedFromTemplate: Bool = false,
+                     droppedFromTemplateName: String? = nil) {
         self.init(title: title, estimatedMinutes: estimatedMinutes, categoryRaw: category.rawValue,
-                  sortIndex: sortIndex, droppedFromTemplate: droppedFromTemplate)
+                  sortIndex: sortIndex, droppedFromTemplate: droppedFromTemplate,
+                  droppedFromTemplateName: droppedFromTemplateName)
     }
 
     /// Takes the slug as stored, so one this build doesn't know survives a trip through the
@@ -35,7 +42,8 @@ final class TaskItem {
          estimatedMinutes: Int = 30,
          categoryRaw: String,
          sortIndex: Int = 0,
-         droppedFromTemplate: Bool = false) {
+         droppedFromTemplate: Bool = false,
+         droppedFromTemplateName: String? = nil) {
         self.id = UUID()
         self.title = title
         self.estimatedMinutes = Swift.max(5, estimatedMinutes)
@@ -44,6 +52,7 @@ final class TaskItem {
         self.createdAt = .now
         self.completedAt = nil
         self.droppedFromTemplate = droppedFromTemplate
+        self.droppedFromTemplateName = droppedFromTemplateName
     }
 
     /// Puts a task back exactly as an action deleted it (Undo), keeping its identity and
@@ -60,7 +69,8 @@ final class TaskItem {
          sortIndex: Int,
          createdAt: Date,
          completedAt: Date?,
-         droppedFromTemplate: Bool) {
+         droppedFromTemplate: Bool,
+         droppedFromTemplateName: String? = nil) {
         self.id = id
         self.title = title
         self.estimatedMinutes = Swift.max(5, estimatedMinutes)
@@ -69,6 +79,7 @@ final class TaskItem {
         self.createdAt = createdAt
         self.completedAt = completedAt
         self.droppedFromTemplate = droppedFromTemplate
+        self.droppedFromTemplateName = droppedFromTemplateName
     }
 
     var category: BlockCategory {

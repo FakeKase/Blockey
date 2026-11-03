@@ -9,6 +9,16 @@ struct InboxTray: View {
     let tasks: [TaskItem]
     var onArm: (TaskItem) -> Void
     var onFillDay: () -> Void
+    /// The same banner Today shows, because this sheet covers Today. Without a copy here the
+    /// Undo for Fill day would be hidden behind the very sheet that caused it.
+    var banner: PlanBanner?
+    var onUndo: () -> Void
+    var onDismissBanner: () -> Void
+    /// At the short "armed" height there is no room for the button or the banner.
+    var isCompact: Bool
+    var placeAllTitle: String
+    var canFill: Bool
+    var fillReason: String
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -31,20 +41,47 @@ struct InboxTray: View {
                     taskList
                 }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !isCompact { bottomArea }
+            }
             .navigationTitle("Inbox")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Fill day") {
-                        onFillDay()
-                        dismiss()
-                    }
-                    .disabled(tasks.isEmpty)
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var bottomArea: some View {
+        if banner != nil || !tasks.isEmpty {
+            VStack(spacing: 8) {
+                if let banner {
+                    PlanBannerView(banner: banner.withoutAction, onUndo: onUndo,
+                                   onDismiss: onDismissBanner, onAction: onDismissBanner)
+                }
+                if !tasks.isEmpty {
+                    Button(action: onFillDay) {
+                        Text(placeAllTitle)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 28)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canFill)
+                    if !canFill {
+                        Text(fillReason)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity)
+            .background(.bar)
         }
     }
 
@@ -116,8 +153,11 @@ struct InboxTray: View {
                             HStack(spacing: 5) {
                                 Text(durationLabel(task.estimatedMinutes))
                                 if task.droppedFromTemplate {
-                                    Text("· didn’t fit")
+                                    Text("\u{00B7}").accessibilityHidden(true)
+                                    Image(systemName: "exclamationmark.circle")
                                         .foregroundStyle(.orange)
+                                        .accessibilityHidden(true)
+                                    Text(PlanCopy.inboxNote(templateName: task.droppedFromTemplateName))
                                 }
                             }
                             .font(.caption)
@@ -127,8 +167,10 @@ struct InboxTray: View {
                         Image(systemName: "hand.tap")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
                     }
                 }
+                .accessibilityHint("Then tap a slot on the day")
                 .swipeActions {
                     Button(role: .destructive) { context.delete(task) } label: {
                         Label("Delete", systemImage: "trash")

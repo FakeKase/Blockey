@@ -4,7 +4,7 @@ import SwiftData
 /// Templates, and which day of the week each one belongs to.
 ///
 /// The weekday assignment is what turns the morning pass into a single tap:
-/// Today already knows which template is yours, so the button says "Stamp
+/// Today already knows which template is yours, so the button says "Add my
 /// Workday" rather than asking you to choose.
 struct TemplatesView: View {
     @Environment(\.modelContext) private var context
@@ -40,7 +40,7 @@ struct TemplatesView: View {
                     }
                 }
 
-                Section("Templates") {
+                Section {
                     ForEach(templates) { template in
                         NavigationLink {
                             TemplateEditor(template: template)
@@ -59,6 +59,12 @@ struct TemplatesView: View {
                         isAddingTemplate = true
                     } label: {
                         Label("New template", systemImage: "plus")
+                    }
+                } header: {
+                    Text("Templates")
+                } footer: {
+                    if templates.contains(where: { $0.name == "Workday" || $0.name == "Weekend" }) {
+                        Text("Workday and Weekend are examples. Edit them or make your own.")
                     }
                 }
             }
@@ -157,7 +163,7 @@ struct TemplateEditor: View {
             Section {
                 EmptyView()
             } footer: {
-                Text("When you stamp this template, anything that collides with a real meeting moves to the next free slot. If nothing fits, it goes to your inbox instead of being dropped.")
+                Text("When you add this template to a day, anything that clashes with a meeting moves to the next free slot. If nothing fits, it goes to your inbox instead of being dropped.")
             }
         }
         .navigationTitle(template.name.isEmpty ? "Template" : template.name)
@@ -209,7 +215,7 @@ struct TemplateRowEditor: View {
     }
 
     /// Template times are wall-clock minutes, not dates — they get applied to
-    /// whatever day you stamp. The picker needs a Date, so this maps between
+    /// whatever day you add them to. The picker needs a Date, so this maps between
     /// them against an arbitrary reference day.
     private var startBinding: Binding<Date> {
         Binding {

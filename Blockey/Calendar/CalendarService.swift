@@ -29,7 +29,7 @@ final class CalendarService {
             case .noCalendarAvailable:
                 return "Blockey could not create its calendar. Check that at least one calendar account is enabled in Settings."
             case .eventNotFound:
-                return "That block no longer exists — it may have been deleted in Calendar."
+                return "That block no longer exists. It may have been deleted in Calendar."
             case .notPermitted:
                 return "Blockey needs full access to your calendar to plan your day."
             case .notEditable:

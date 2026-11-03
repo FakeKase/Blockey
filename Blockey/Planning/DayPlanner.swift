@@ -26,16 +26,20 @@ struct StampTemplate {
     /// Slug per row id, as stored. Rows missing from the map fall back, as
     /// `DayTemplate.categorySlug(forRowID:)` does.
     let slugs: [UUID: String]
+    /// The template's name, so a row that falls to the inbox can say where it came from.
+    let name: String?
 
-    init(items: [TemplateStamper.Item], slugs: [UUID: String]) {
+    init(items: [TemplateStamper.Item], slugs: [UUID: String], name: String? = nil) {
         self.items = items
         self.slugs = slugs
+        self.name = name
     }
 
     init(_ template: DayTemplate) {
         self.init(items: template.stampItems,
                   slugs: Dictionary(template.rows.map { ($0.id, $0.categoryRaw) },
-                                    uniquingKeysWith: { first, _ in first }))
+                                    uniquingKeysWith: { first, _ in first }),
+                  name: template.name)
     }
 
     func slug(forRowID id: UUID) -> String {
@@ -55,6 +59,8 @@ struct TaskSnapshot: Equatable, Sendable {
     /// silently un-complete a task once completion lands.
     let completedAt: Date?
     let droppedFromTemplate: Bool
+    /// Defaulted so the memberwise initialiser keeps working for older call sites.
+    var droppedFromTemplateName: String? = nil
 }
 
 extension TaskSnapshot {
@@ -67,7 +73,8 @@ extension TaskSnapshot {
                   sortIndex: task.sortIndex,
                   createdAt: task.createdAt,
                   completedAt: task.completedAt,
-                  droppedFromTemplate: task.droppedFromTemplate)
+                  droppedFromTemplate: task.droppedFromTemplate,
+                  droppedFromTemplateName: task.droppedFromTemplateName)
     }
 
     /// Re-inserts the task unless one with this id already exists. Returns whether it inserted.
@@ -85,7 +92,8 @@ extension TaskSnapshot {
         context.insert(TaskItem(id: id, title: title, estimatedMinutes: estimatedMinutes,
                                 categoryRaw: categoryRaw, sortIndex: sortIndex,
                                 createdAt: createdAt, completedAt: completedAt,
-                                droppedFromTemplate: droppedFromTemplate))
+                                droppedFromTemplate: droppedFromTemplate,
+                                droppedFromTemplateName: droppedFromTemplateName))
         return true
     }
 }
@@ -160,16 +168,40 @@ struct StampResult: Equatable {
 
     var toInbox: Int { unplaced.count + failures.count }
 
-    var message: PlanMessage {
+    /// What the banner says. `day` is a phrase from `StampPreview.dayPhrase`, so it reads after
+    /// "for": "Added 5 blocks for Monday".
+    ///
+    /// A clean stamp names the day. Once something has gone wrong the sentence turns to what
+    /// the user has to do about it, and the day (which they have just been looking at) is left
+    /// out so the warning stays short.
+    func message(day: String) -> PlanMessage {
         let count = created.count
-        var text = "Stamped \(count) block\(count == 1 ? "" : "s")"
-        if movedCount > 0 { text += " \u{00B7} \(movedCount) moved to fit" }
-        if toInbox > 0 { text += " \u{00B7} \(toInbox) to inbox" }
-        if !failures.isEmpty { text += " (\(failures.count) couldn\u{2019}t be saved)" }
-        // Carried in from the clear, which the stamp banner would otherwise overwrite.
         let lost = cleared?.lost ?? 0
-        if lost > 0 { text += " \u{00B7} \(lost) lost" }
-        return PlanMessage(text: text, isWarning: toInbox > 0 || lost > 0)
+        let blocks = count == 0 ? "No blocks added" : "Added \(count) block\(count == 1 ? "" : "s")"
+
+        if toInbox == 0 && lost == 0 {
+            var text = "\(blocks) for \(day)"
+            if movedCount > 0 { text += " \u{00B7} \(movedCount) moved to fit" }
+            return PlanMessage(text: text)
+        }
+
+        var sentences = [blocks + "."]
+        if unplaced.count == 1, failures.isEmpty, let only = unplaced.first {
+            sentences.append("\u{201C}\(only.title)\u{201D} is in your inbox.")
+        } else if unplaced.count >= 1 {
+            sentences.append("\(unplaced.count) didn\u{2019}t fit and \(unplaced.count == 1 ? "is" : "are") in your inbox.")
+        }
+        if !failures.isEmpty {
+            let n = failures.count
+            sentences.append("\(n) couldn\u{2019}t be saved to your calendar and \(n == 1 ? "is" : "are") in your inbox.")
+        }
+        // Carried in from the clear, which the stamp banner would otherwise overwrite.
+        if lost > 0 {
+            sentences.append(lost == 1
+                             ? "1 block could not be returned and was deleted."
+                             : "\(lost) blocks could not be returned and were deleted.")
+        }
+        return PlanMessage(text: sentences.joined(separator: " "), isWarning: true)
     }
 }
 
@@ -392,6 +424,18 @@ struct DayPlanner {
         return preview(template, inputs: inputs, mode: mode, contents: contents)
     }
 
+    /// A preview plus whether the day has any editable own blocks, both from one fetch, so a
+    /// decision to skip the sheet cannot rest on a different picture of the day than the plan.
+    func previewWithOwnBlocks(_ template: StampTemplate?,
+                              inputs: DayPlanInputs,
+                              mode: StampPreview.Mode) -> (preview: StampPreview, hasOwnEditableBlocks: Bool) {
+        let contents = writer.contents(for: inputs.date,
+                                       ignoring: inputs.hiddenCalendarIDs,
+                                       calendar: inputs.calendar)
+        return (preview(template, inputs: inputs, mode: mode, contents: contents),
+                contents.blocks.contains(where: \.isEditable))
+    }
+
     private func preview(_ template: StampTemplate?,
                          inputs: DayPlanInputs,
                          mode: StampPreview.Mode,
@@ -512,7 +556,8 @@ struct DayPlanner {
                                 estimatedMinutes: item.durationMinutes,
                                 categoryRaw: template.slug(forRowID: item.id),
                                 sortIndex: index,
-                                droppedFromTemplate: true)
+                                droppedFromTemplate: true,
+                                droppedFromTemplateName: template.name)
             context.insert(task)
             insertedIDs.append(task.id)
             index -= 1

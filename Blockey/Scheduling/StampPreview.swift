@@ -52,7 +52,7 @@ struct StampPreview: Equatable, Sendable {
             switch kind {
             case .placed: return nil
             case .moved(_, let from): return "moved from \(format(from))"
-            case .inbox: return "no room today"
+            case .inbox: return "no room"
             }
         }
     }
@@ -156,5 +156,14 @@ struct StampPreview: Equatable, Sendable {
         let index = calendar.component(.weekday, from: date) - 1
         let names = calendar.weekdaySymbols
         return names.indices.contains(index) ? names[index] : ""
+    }
+
+    /// "today", "tomorrow" or the weekday name, for use after "for" or in "Plan ...".
+    ///
+    /// "Add 4 blocks for Monday" and "Plan today" read well where "to today" and "on today"
+    /// do not, which is why the copy is built around "for".
+    static func dayPhrase(for date: Date, now: Date, calendar: Calendar) -> String {
+        let title = sheetTitle(for: date, now: now, calendar: calendar)
+        return title == "Today" || title == "Tomorrow" ? title.lowercased() : title
     }
 }

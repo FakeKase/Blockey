@@ -3,8 +3,8 @@ import SwiftData
 
 /// First-run content.
 ///
-/// An empty time-blocking app is hard to judge: you cannot see what stamping
-/// does until a template exists. Two plausible templates, wired to the right
+/// An empty time-blocking app is hard to judge: you cannot see what adding a
+/// template does until one exists. Two plausible templates, wired to the right
 /// weekdays, mean the first morning pass works before anything is configured.
 enum StarterData {
 

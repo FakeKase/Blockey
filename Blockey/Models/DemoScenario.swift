@@ -30,6 +30,25 @@ enum DemoScenario {
         ProcessInfo.processInfo.arguments.contains("-blockeyStamp")
     }
 
+    /// `-blockeyPlanSheet` opens the "Plan <day>" sheet after any `-blockeyStamp` has landed;
+    /// add `-blockeyStartOver` to open it with Start over selected (needs a stamped day).
+    static var wantsPlanSheet: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyPlanSheet")
+    }
+    static var wantsStartOver: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyStartOver")
+    }
+
+    /// `-blockeyInbox` opens the inbox tray at its medium height.
+    static var wantsInbox: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyInbox")
+    }
+
+    /// `-blockeyHoldBanner` stops the banner timer, so a screenshot can catch it.
+    static var holdsBanner: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyHoldBanner")
+    }
+
     /// A run of back-to-back evening blocks, one of them only 30 minutes long.
     /// Short blocks are where the timeline's layout is under the most pressure,
     /// so this is the scenario worth being able to reproduce on demand.
