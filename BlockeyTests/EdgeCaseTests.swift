@@ -219,18 +219,25 @@ struct BlockTokenTests {
         #expect(parsed.sourceTaskID == nil)
     }
 
-    @Test("A category slug that no longer exists degrades to the fallback")
+    // Was "degrades to the fallback" and only checked the resolved category. The slug is now
+    // kept, so this pins both halves: it *displays* as the fallback and *survives* a rewrite.
+    // More cases live in BlockTokenSlugTests.
+    @Test("A category slug that no longer exists displays as the fallback but is kept")
     func unknownCategoryFallsBack() throws {
         let url = try #require(URL(string: "blockey://block/\(id.uuidString)?c=telepathy"))
         let parsed = try #require(BlockToken(url: url))
         #expect(parsed.id == id)
         #expect(parsed.category == .fallback)
+        #expect(parsed.categorySlug == "telepathy")
+        #expect(BlockToken(url: parsed.url)?.categorySlug == "telepathy")
     }
 
-    @Test("An empty category value degrades to the fallback")
+    @Test("An empty category value displays as the fallback and is treated as absent")
     func emptyCategoryFallsBack() throws {
         let url = try #require(URL(string: "blockey://block/\(id.uuidString)?c="))
-        #expect(BlockToken(url: url)?.category == .fallback)
+        let parsed = try #require(BlockToken(url: url))
+        #expect(parsed.category == .fallback)
+        #expect(parsed.categorySlug == nil)
     }
 
     @Test("A malformed source task id is dropped, not fatal")

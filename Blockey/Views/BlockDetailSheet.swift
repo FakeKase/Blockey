@@ -4,7 +4,8 @@ import SwiftUI
 /// and the two ways out — delete it, or put it back in the inbox.
 struct BlockDetailSheet: View {
     let block: Block
-    var onSave: (String, TimeRange, BlockCategory) -> Void
+    /// The category is nil unless it differs from the original (see `categoryToSave`).
+    var onSave: (String, TimeRange, BlockCategory?) -> Void
     var onDelete: () -> Void
     var onReturnToInbox: () -> Void
 
@@ -16,7 +17,7 @@ struct BlockDetailSheet: View {
     @State private var category: BlockCategory
 
     init(block: Block,
-         onSave: @escaping (String, TimeRange, BlockCategory) -> Void,
+         onSave: @escaping (String, TimeRange, BlockCategory?) -> Void,
          onDelete: @escaping () -> Void,
          onReturnToInbox: @escaping () -> Void) {
         self.block = block
@@ -27,6 +28,14 @@ struct BlockDetailSheet: View {
         _start = State(initialValue: block.range.start)
         _minutes = State(initialValue: Int(block.range.duration / 60))
         _category = State(initialValue: block.category)
+    }
+
+    /// Nil when the picker ends where it began, so a Save that changes nothing about the
+    /// category never rewrites the slug, and picking away and back doesn't either. Deliberately
+    /// cannot honour an explicit pick of the fallback on a block whose slug is unknown: keeping
+    /// the unknown slug is the safer error, and the picker will show unknown slugs properly later.
+    static func categoryToSave(initial: BlockCategory, current: BlockCategory) -> BlockCategory? {
+        current == initial ? nil : current
     }
 
     var body: some View {
@@ -75,7 +84,7 @@ struct BlockDetailSheet: View {
                         let trimmed = title.trimmingCharacters(in: .whitespaces)
                         onSave(trimmed.isEmpty ? block.title : trimmed,
                                TimeRange(start: start, duration: TimeInterval(minutes * 60)),
-                               category)
+                               Self.categoryToSave(initial: block.category, current: category))
                         dismiss()
                     }
                 }

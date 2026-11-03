@@ -218,6 +218,18 @@ final class CalendarService {
                      category: BlockCategory,
                      sourceTaskID: UUID? = nil,
                      alarmMinutesBefore: Int? = nil) throws -> Block {
+        try createBlock(title: title, range: range, categorySlug: category.rawValue,
+                        sourceTaskID: sourceTaskID, alarmMinutesBefore: alarmMinutesBefore)
+    }
+
+    /// The slug form, for work that already carries one (inbox tasks, template rows). Going
+    /// through `BlockCategory` would turn a slug this build doesn't know into the fallback.
+    @discardableResult
+    func createBlock(title: String,
+                     range: TimeRange,
+                     categorySlug: String?,
+                     sourceTaskID: UUID? = nil,
+                     alarmMinutesBefore: Int? = nil) throws -> Block {
         guard access.isGranted else { throw Failure.notPermitted }
         let calendar = try ensureBlockeyCalendar()
 
@@ -226,7 +238,13 @@ final class CalendarService {
         event.title = title
         event.startDate = range.start
         event.endDate = range.end
-        event.url = BlockToken(category: category, sourceTaskID: sourceTaskID).url
+        if let url = BlockToken(categorySlug: categorySlug, sourceTaskID: sourceTaskID).url {
+            event.url = url
+        } else {
+            // Unreachable by construction (fixed scheme, host and UUID path). Loud in debug
+            // builds so it can't hide; harmless in release, where the block is just tokenless.
+            assertionFailure("BlockToken produced no url for a new block")
+        }
         if let alarmMinutesBefore {
             event.addAlarm(EKAlarm(relativeOffset: TimeInterval(-alarmMinutesBefore * 60)))
         }
@@ -252,7 +270,13 @@ final class CalendarService {
         if let category {
             var token = block.token ?? BlockToken()
             token.category = category
-            event.url = token.url
+            if let url = token.url {
+                event.url = url
+            } else {
+                // Same unreachable case as in createBlock. Here the old token stays, so the
+                // save would succeed without the category change: say so in debug builds.
+                assertionFailure("BlockToken produced no url; category change not written")
+            }
         }
 
         try store.save(event, span: .thisEvent, commit: true)

@@ -571,7 +571,7 @@ struct TodayView: View {
             do {
                 try calendars.createBlock(title: task.title,
                                           range: slot,
-                                          category: task.category,
+                                          categorySlug: task.categoryRaw,
                                           sourceTaskID: task.id,
                                           alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
                 busy.append(slot)
@@ -597,7 +597,7 @@ struct TodayView: View {
         do {
             try calendars.createBlock(title: task.title,
                                       range: TimeRange(start: start, duration: task.duration),
-                                      category: task.category,
+                                      categorySlug: task.categoryRaw,
                                       sourceTaskID: task.id,
                                       alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
             // The inbox holds only unscheduled work, so a placed task leaves it.
@@ -623,7 +623,7 @@ struct TodayView: View {
         }
         context.insert(TaskItem(title: block.title,
                                 estimatedMinutes: Int(block.range.duration / 60),
-                                category: block.category,
+                                categoryRaw: block.token?.categorySlug ?? BlockCategory.fallback.rawValue,
                                 sortIndex: nextInboxSortIndex()))
         reload()
         show("Returned to inbox")
@@ -649,7 +649,7 @@ struct TodayView: View {
             for block in removed where block.token?.sourceTaskID != nil {
                 context.insert(TaskItem(title: block.title,
                                         estimatedMinutes: Int(block.range.duration / 60),
-                                        category: block.category,
+                                        categoryRaw: block.token?.categorySlug ?? BlockCategory.fallback.rawValue,
                                         sortIndex: index))
                 index -= 1
                 returned += 1
@@ -734,7 +734,7 @@ struct TodayView: View {
             do {
                 try calendars.createBlock(title: item.title,
                                           range: range,
-                                          category: template.category(forRowID: item.id),
+                                          categorySlug: template.categorySlug(forRowID: item.id),
                                           alarmMinutesBefore: alarmEnabled ? alarmMinutesBefore : nil)
                 created += 1
             } catch {
@@ -750,7 +750,7 @@ struct TodayView: View {
         for item in result.unplaced + failures {
             context.insert(TaskItem(title: item.title,
                                     estimatedMinutes: item.durationMinutes,
-                                    category: template.category(forRowID: item.id),
+                                    categoryRaw: template.categorySlug(forRowID: item.id),
                                     sortIndex: index,
                                     droppedFromTemplate: true))
             index -= 1

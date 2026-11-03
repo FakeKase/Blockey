@@ -38,6 +38,12 @@ final class DayTemplate {
     func category(forRowID id: UUID) -> BlockCategory {
         rows.first { $0.id == id }?.category ?? .fallback
     }
+
+    /// The row's slug as stored, for carrying into blocks and tasks without collapsing one
+    /// this build doesn't know to the fallback.
+    func categorySlug(forRowID id: UUID) -> String {
+        rows.first { $0.id == id }?.categoryRaw ?? BlockCategory.fallback.rawValue
+    }
 }
 
 /// One line of a template.
@@ -50,15 +56,23 @@ final class TemplateRow {
     var categoryRaw: String
     var template: DayTemplate?
 
+    convenience init(title: String,
+                     startMinuteOfDay: Int,
+                     durationMinutes: Int,
+                     category: BlockCategory = .deepWork) {
+        self.init(title: title, startMinuteOfDay: startMinuteOfDay,
+                  durationMinutes: durationMinutes, categoryRaw: category.rawValue)
+    }
+
     init(title: String,
          startMinuteOfDay: Int,
          durationMinutes: Int,
-         category: BlockCategory = .deepWork) {
+         categoryRaw: String) {
         self.id = UUID()
         self.title = title
         self.startMinuteOfDay = startMinuteOfDay
         self.durationMinutes = durationMinutes
-        self.categoryRaw = category.rawValue
+        self.categoryRaw = categoryRaw
     }
 
     var category: BlockCategory {
