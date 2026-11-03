@@ -229,6 +229,9 @@ Calendar.
 
 ## 7. Open questions, with the designer's recommendations
 
+**Status (2026-11-03):** the owner said to continue without answering individually, so the lead
+adopted every recommendation below as a provisional decision. Any of them can be reversed later.
+
 - **Q1.** The inbox note needs the template's name, and `TaskItem` only stores a Bool. Add an optional
   `droppedFromTemplateName: String?` (with an optional Backup field), falling back to "your template".
   **Recommend: add it.**
