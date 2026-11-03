@@ -16,9 +16,10 @@ checked against the source on 2026-11-03.
 
 ### Where history could come from
 
-- **SwiftData keeps no history.** `TodayView.place()` deletes the task once its block is written
-  (`TodayView.swift:606`), and so does `fillDay()` (`:578`). That is known gap 1. A history built from
-  `TaskItem` would see only the current inbox.
+- **SwiftData keeps no history.** `DayPlanner.place` deletes the task once its block is written,
+  and so does `DayPlanner.fillDay` (both in `Blockey/Planning/DayPlanner.swift`, moved out of
+  `TodayView` in task 2.0). That is known gap 1. A history built from `TaskItem` would see only the
+  current inbox.
 - **Template rows** (`TemplateRow.title`, duration, category) are in SwiftData and always present.
 - **Past blocks** are the real record. Every placed or stamped item survives as an `EKEvent` in the
   Blockey calendar with its title, its real duration after any resize, and its `c=` slug. That record

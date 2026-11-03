@@ -34,9 +34,11 @@ Everything in this ADR is a decision. None of it is built. Where the text says w
     passes it on every Save (`:74-78`). `CalendarService.update` then rebuilds the url whenever a
     category is passed (`CalendarService.swift:252-255`). Opening an unknown-slug block and tapping
     Save permanently rewrites its slug to `deep`.
-  - `returnToInbox` (`TodayView.swift:624-627`) and `clearBlocks` (`:650-653`) build a new
-    `TaskItem` from `block.category`, so a block with an unknown slug comes back to the inbox as Deep
-    work.
+  - Return to inbox and Clear the day used to build the new `TaskItem` from `block.category` in
+    `TodayView`, so a block with an unknown slug came back to the inbox as Deep work. Fixed in
+    phase 1: both paths now live in `Blockey/Planning/DayPlanner.swift` (`DayPlanner.returnToInbox`
+    and `DayPlanner.clear`, moved there in task 2.0) and take `block.token?.categorySlug`, falling
+    back to `deep` only when the token carries no slug.
   - Restore maps every task and template row through the enum (`Models/Backup.swift:94`, `:107`).
 - `BlockToken.url` always writes `c=` (`BlockToken.swift:64`), so a block whose token had no
   category gains `c=deep` on its first rewrite. `:70` ends in a force unwrap, which CLAUDE.md forbids.

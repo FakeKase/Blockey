@@ -8,6 +8,10 @@ Baseline: `scripts/test.sh` gives 146 tests in 20 suites, all passing (2026-11-0
 
 Nothing in this document has been built. It is a plan.
 
+Note (2026-11-03): the `TodayView.swift` line references below predate task 2.0, which moved stamp,
+fill, clear, place and return-to-inbox into `Blockey/Planning/DayPlanner.swift`. Find those by
+symbol name, not by line.
+
 ---
 
 ## 1. Interpretation

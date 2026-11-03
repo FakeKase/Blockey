@@ -120,3 +120,5 @@ implementation behind it, and keep the EventKit implementation as a read-only im
 because EventKit remains readable regardless. The cost of backing out is roughly one file plus a
 sync engine — i.e. exactly the cost of having chosen option B on day one, paid later. That is an
 acceptable one-way door: it is expensive to reverse but not destructive, and nothing is lost.
+
+Update 2026-11-03: the first slice of this `BlockStore` now exists as `BlockWriting`; see ADR 007.
