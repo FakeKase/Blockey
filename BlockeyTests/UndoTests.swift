@@ -115,7 +115,7 @@ struct UndoTests {
         #expect(outcome.message == PlanMessage(text: "Removed 3 of 4 blocks", isWarning: true))
     }
 
-    @Test("A block whose token was stripped cannot be found, so it is left alone and reported")
+    @Test("A block whose token was stripped cannot be found, so nothing is removed for it and it is counted as missing")
     func undoAfterTokenStrippedReportsPartial() throws {
         let rig = try makeRig()
         let result = rig.planner.stamp(fourRows, inputs: inputs(), openTasks: [])

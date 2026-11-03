@@ -303,7 +303,8 @@ final class CalendarService {
     ///
     /// Blocks are never looked up by `eventIdentifier` here (ADR 001): it does not survive every
     /// edit, and a stale one could point at a block that is not ours to delete. A token that
-    /// finds nothing, deleted or stripped, is reported and nothing is removed for it.
+    /// finds nothing, deleted or stripped, lands in neither `removed` nor `leftAlone`, and nothing is
+    /// removed for it; the planner derives the missing count from that.
     ///
     /// Everything is staged with `commit: false` and committed once. On any throw the staged
     /// work is discarded with `reset()`, for the reason `deleteAllBlocks` gives: it would
