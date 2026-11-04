@@ -1,11 +1,9 @@
 # ADR 005: User-defined categories and Backup v2
 
-Status: proposed. Phase 5.1 ran on 2026-11-04 (addendum at the end): 85 of 99 rows match, 13
-differ (nine amended here because the code is right, two owned by redesign stories, two code
-follow-ups) and 1 is missing. **Acceptance is blocked by that one missing check:**
-the install-over migration check for adding `CategoryDefinition` to the container has never been
-run, and it is the only thing standing between this ADR and the tasks and templates on the
-owner's phone. Mark this accepted once that check passes and `scripts/test.sh` is green.
+Status: accepted, 2026-11-04. Phase 5.1 (addendum at the end): 85 of 99 rows match, 13 differ
+(nine amended here because the code is right, two owned by redesign stories, two code follow-ups)
+and the 1 missing check, install-over migration, has since passed (see "F1 result" at the end).
+`scripts/test.sh` is green at 724 tests.
 Date: 2026-11-03
 
 Owner sign-off (2026-11-03) on three decisions that go beyond the plan:
@@ -844,3 +842,25 @@ ADR accepted when F1 passes and `scripts/test.sh` is green. F2 and F3 do not blo
 
 Known gap 6 (backup omits settings) closes on the same condition: settings are carried and
 restored (rows 63, 66, 71), and `BackupV2Tests` pins it, but this pass did not run the suite.
+
+
+### F1 result: install-over migration check, 2026-11-04, PASS
+
+Run by `qa-engineer` on the simulator. A store written by `422767e` (`6c3e723^`, the last commit
+before `CategoryDefinition`, a descendant of the token-probe build on the owner's phone) was
+populated with the old build's demo and starter data, then HEAD was installed over it with
+`xcrun simctl install` and no uninstall, keeping the same data container.
+
+| Entity | Before | After |
+|---|---|---|
+| TaskItem | 4 | 4 |
+| DayTemplate | 2 | 2 |
+| TemplateRow | 8 | 8 |
+| TemplateAssignment | 7 | 7 |
+| ActivityDay | 13 | 13 |
+| CategoryDefinition | table absent | table present, 0 rows |
+
+Hashes of the user-visible columns (titles, category raw values, minutes, ids, times) and the full
+ActivityDay rows are identical before and after. The app launched with no re-seeding and showed
+the existing streak, inbox and templates. SwiftData's lightweight migration added the new table
+and left everything else intact.

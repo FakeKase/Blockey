@@ -21,3 +21,6 @@ issues/
 # Scratch output from scripts/run.sh and scripts/demo.sh
 *.png
 !Blockey/Assets.xcassets/**/*.png
+
+# Scratch screenshots, store snapshots and worktrees from agents
+/tmp/

@@ -24,7 +24,8 @@ struct BlockeyBackup: Codable {
     var templates: [Template] = []
     var assignments: [Assignment] = []
     /// Days with an add, as Gregorian `yyyy-MM-dd` keys (issue #7). Optional and additive, so a
-    /// backup written before the streak existed still decodes and `version` stays 1. Restore
+    /// backup written before the streak existed still decodes (version 1 files restore; the
+    /// current format is 2, see `currentVersion`). Restore
     /// merges these in rather than replacing: a streak is history, and a stale backup must not
     /// shorten the one on the phone.
     var activityDays: [String]?

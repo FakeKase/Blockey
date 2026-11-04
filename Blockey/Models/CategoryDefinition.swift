@@ -4,7 +4,7 @@ import SwiftData
 /// A user-defined category, or a built-in the user has customised (ADR 005). Keyed by slug.
 ///
 /// Rows exist only for custom categories and overridden built-ins; deleting a built-in's row is
-/// "Reset to default". Not in iCloud (ADR 003), so it travels in the backup once Backup v2 lands.
+/// "Reset to default". Not in iCloud (ADR 003), so it travels in the backup (Backup v2, `BlockeyBackup.categories`).
 ///
 /// `.unique` on `slug` upserts instead of failing, so callers must check
 /// `CategoryCatalog.isSlugTaken` before inserting. Additive to the schema, so the existing store

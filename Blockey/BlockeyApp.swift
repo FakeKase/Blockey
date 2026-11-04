@@ -33,14 +33,14 @@ enum SettingsKey {
     static let alarmEnabled = "blockAlarmEnabled"
     static let alarmMinutesBefore = "blockAlarmMinutesBefore"
     static let hasSeededTemplates = "hasSeededStarterTemplates"
-    /// Skips the "Plan <day>" preview for a one-tap add on an empty day. Off by default, and
-    /// not backed up (gap 6): losing it resets it to the safe setting.
+    /// Skips the "Plan <day>" preview for a one-tap add on an empty day. Off by default. Carried in
+    /// backup v2 (ADR 005); a backup without it leaves the safe default in place.
     static let skipPlanPreview = "skipPlanPreview"
     /// Set once the first-launch card has been answered. Never reset. Not backed up either, so
     /// a delete and reinstall shows the card again, which is harmless.
     static let hasSeenStarterTemplatesNote = "hasSeenStarterTemplatesNote"
     /// Set once the streak has been seeded from existing Blockey events (issue #7). Never reset.
-    /// Not backed up (gap 6): a reinstall re-seeds, which merges and so is harmless.
+    /// A one-time flag, deliberately not backed up (see `BlockeyBackup.Settings`): a reinstall re-seeds, which merges and so is harmless.
     static let hasSeededStreak = "hasSeededStreakHistory"
 
     static let defaultDayStart = 7 * 60

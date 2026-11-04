@@ -16,7 +16,7 @@ struct ColorSurfaces: Hashable, Sendable {
     /// surfaces. Nothing else in `Catalog/` may hard-code a canvas or meeting colour.
     ///
     /// Meeting fill is `Color.primary` at 5 percent (light) and 6 percent (dark) over the canvas
-    /// (`TimelineCanvas.swift:462`), composited in sRGB and rounded to bytes.
+    /// (`TimelineCanvas.swift:466`), composited in sRGB and rounded to bytes.
     static let assumedPendingStory1 = ColorSurfaces(
         light: ModeSurfaces(canvas: SRGB(rgb: 0xFAF8F5), meetingFill: SRGB(rgb: 0xEEECE9)),
         dark: ModeSurfaces(canvas: SRGB(rgb: 0x1C1C1E), meetingFill: SRGB(rgb: 0x2A2A2C)))
