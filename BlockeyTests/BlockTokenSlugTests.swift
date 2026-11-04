@@ -33,7 +33,6 @@ struct BlockTokenSlugTests {
         let url = try makeURL("?c=telepathy")
         let parsed = try #require(BlockToken(url: url))
         #expect(parsed.categorySlug == "telepathy")
-        #expect(parsed.category == .fallback)
 
         let again = try #require(BlockToken(url: parsed.url))
         #expect(again.categorySlug == "telepathy")
@@ -99,7 +98,6 @@ struct BlockTokenSlugTests {
         let url = try makeURL("")
         let parsed = try #require(BlockToken(url: url))
         #expect(parsed.categorySlug == nil)
-        #expect(parsed.category == .fallback)
         #expect(!queryItems(try #require(parsed.url)).contains { $0.name == "c" })
     }
 
@@ -120,7 +118,6 @@ struct BlockTokenSlugTests {
     func duplicateCQueryItemsFirstWins() throws {
         let parsed = try #require(BlockToken(url: try makeURL("?c=rest&c=admin")))
         #expect(parsed.categorySlug == "rest")
-        #expect(parsed.category == .rest)
 
         let unknownFirst = try #require(BlockToken(url: try makeURL("?c=zzz&c=admin")))
         #expect(unknownFirst.categorySlug == "zzz")
@@ -130,7 +127,6 @@ struct BlockTokenSlugTests {
     func categoryValueIsCaseSensitive() throws {
         let parsed = try #require(BlockToken(url: try makeURL("?c=DEEP")))
         #expect(parsed.categorySlug == "DEEP")
-        #expect(parsed.category == .fallback)
         // Not rewritten to "deep" either: the original is what the user typed.
         #expect(try #require(BlockToken(url: parsed.url)).categorySlug == "DEEP")
     }
@@ -187,8 +183,8 @@ struct BlockTokenSlugTests {
     @Test("Setting category sets the slug, and choosing one is an explicit overwrite")
     func settingCategorySetsSlug() throws {
         var token = try #require(BlockToken(url: try makeURL("?c=telepathy&x=1")))
-        token.category = .admin
-        #expect(token.categorySlug == BlockCategory.admin.rawValue)
+        token = token.replacingCategorySlug("admin")
+        #expect(token.categorySlug == "admin")
         // Unknown query items are not collateral damage of a category change.
         #expect(queryItems(try #require(token.url)).contains { $0.name == "x" })
     }
@@ -196,16 +192,15 @@ struct BlockTokenSlugTests {
     @Test("Save without a category change does not rewrite the token")
     func saveWithUnchangedCategoryDoesNotRewriteToken() {
         for category in BlockCategory.allCases {
-            #expect(BlockDetailSheet.categoryToSave(initial: category, current: category) == nil)
+            #expect(BlockDetailSheet.slugToSave(initial: category.rawValue, current: category.rawValue) == nil)
         }
-        #expect(BlockDetailSheet.categoryToSave(initial: .deepWork, current: .rest) == .rest)
+        #expect(BlockDetailSheet.slugToSave(initial: "deep", current: "rest") == "rest")
     }
 
     @Test("Picking away and back to the original category saves nothing")
     func pickAwayAndBackSavesNothing() {
         // The sheet holds only the current selection, so away-and-back is just equal values.
-        // For an unknown slug the block displays as the fallback; picking the fallback is
-        // "unchanged", which keeps the unknown slug.
-        #expect(BlockDetailSheet.categoryToSave(initial: .fallback, current: .fallback) == nil)
+        // A block with no `c=` shows as the fallback, so choosing the fallback leaves it alone.
+        #expect(BlockDetailSheet.slugToSave(initial: nil, current: "deep") == nil)
     }
 }

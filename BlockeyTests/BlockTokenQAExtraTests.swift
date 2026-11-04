@@ -52,16 +52,15 @@ struct BlockTokenQAExtraTests {
         let u = try #require(URL(string: "blockey://block/\(qaID.uuidString)?c=rest&x=1"))
         var token = try #require(BlockToken(url: u))
         let before = token
-        token.category = .admin
-        token.category = .rest
+        token = token.replacingCategorySlug("admin").replacingCategorySlug("rest")
         #expect(token == before)
     }
 
     @Test("A tokenless block given a category gets a fresh token carrying only that category")
     func tokenlessBlockGainsCategoryOnly() {
         var token = BlockToken()
-        token.category = .admin
-        #expect(token.categorySlug == BlockCategory.admin.rawValue)
+        token = token.replacingCategorySlug("admin")
+        #expect(token.categorySlug == "admin")
         #expect(token.unknownQueryItems.isEmpty)
         #expect(token.sourceTaskID == nil)
     }

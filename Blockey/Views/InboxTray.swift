@@ -24,6 +24,9 @@ struct InboxTray: View {
     @Environment(\.dismiss) private var dismiss
 
     @Environment(CalendarService.self) private var calendars
+    @Environment(\.categoryCatalog) private var catalog
+    @State private var isChoosingCategory = false
+    @State private var adoption: AdoptionOutcome?
 
     @State private var draft = ComposerDraft()
     @State private var suggestionRow = ComposerSuggestionRow()
@@ -51,7 +54,10 @@ struct InboxTray: View {
             }
             // Once per open: the tray is rebuilt each time the sheet presents, so this runs once
             // and never on `.EKEventStoreChanged` or `calendars.revision` (known gap 5).
-            .task { loadSuggestionSources() }
+            .task {
+                draft.moveOffArchivedDefault(in: catalog)
+                loadSuggestionSources()
+            }
             .navigationTitle("Inbox")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -140,17 +146,83 @@ struct InboxTray: View {
                              selected: draft.minutes == minutes) { draft.select(minutes: minutes) }
                     }
                     Divider().frame(height: 18).padding(.horizontal, 2)
-                    ForEach(BlockCategory.allCases) { category in
-                        chip(label: category.title,
-                             tint: category.tint,
-                             selected: draft.category == category) { draft.category = category }
-                    }
+                    categoryChips
                 }
                 .padding(.horizontal, 1)
             }
         }
+        .sheet(isPresented: $isChoosingCategory) {
+            NavigationStack {
+                CategoryChoiceList(current: draft.category, onSelect: { draft.category = $0 },
+                                   showsCancel: true, outcome: $adoption)
+            }
+        }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    /// Category chips in the owner's order (UI spec 1.4), or one chip that opens the whole list
+    /// when there are too many to scan or the text is very large.
+    @ViewBuilder
+    private var categoryChips: some View {
+        let layout = CategoryChoiceLayout(catalog: catalog, current: draft.category)
+        if ComposerCategoryRow.isCollapsed(unarchivedCount: layout.rows.count,
+                                           isAccessibilitySize: typeSize.isAccessibilitySize) {
+            let current = catalog.resolve(draft.category)
+            Button { isChoosingCategory = true } label: {
+                HStack(spacing: 4) {
+                    CategoryGlyph(style: CategoryStyle(current), size: .caption)
+                    Text(current.name).lineLimit(1).truncationMode(.tail)
+                    Image(systemName: "chevron.up.chevron.down").font(.caption2).accessibilityHidden(true)
+                }
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.primary.opacity(0.05), in: Capsule())
+                .frame(maxWidth: 180, minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Category, \(current.name)")
+            .accessibilityHint("Opens the list of categories")
+        } else {
+            // TODO(3.8): the trailing `New` chip (spec 1.4) opens the category editor. Hidden
+            // until that editor exists.
+            ForEach(layout.chipOrder, id: \.slug) { category in
+                categoryChip(category, selected: category.slug == layout.selectedSlug)
+            }
+        }
+    }
+
+    /// Today's paint (tint at the existing opacities, now from the category's spine) with the
+    /// text kept `.primary` and a check mark on the selected chip, so selection is never colour
+    /// alone. The capsule stays about as tall as before; the tap area grows to 44 pt.
+    private func categoryChip(_ category: ResolvedCategory, selected: Bool) -> some View {
+        let style = CategoryStyle(category)
+        let tint = style.spine
+        return Button {
+            if let slug = category.slug { draft.category = slug }
+        } label: {
+            HStack(spacing: 4) {
+                if selected { Image(systemName: "checkmark").font(.caption2.weight(.bold)).accessibilityHidden(true) }
+                CategoryGlyph(style: style, size: .caption)
+                Text(category.name).lineLimit(1).truncationMode(.tail)
+            }
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(selected ? tint.opacity(0.2) : Color.primary.opacity(0.05), in: Capsule())
+            .overlay(Capsule().strokeBorder(selected ? tint.opacity(0.6) : .clear, lineWidth: 1))
+            .frame(maxWidth: 180, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(CategoryPickerCopy.listAccessibilityLabel(for: category))
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     /// Nothing at all (no placeholder, no reserved height) when there is nothing to suggest, and
@@ -183,8 +255,8 @@ struct InboxTray: View {
     private func suggestionChip(_ suggestion: TitleSuggestion) -> some View {
         Button { apply(suggestion) } label: {
             HStack(spacing: 4) {
-                if let category = suggestion.categorySlug.flatMap(BlockCategory.init(rawValue:)) {
-                    CategoryGlyph(category: category, size: .caption)
+                if let slug = suggestion.categorySlug {
+                    CategoryGlyph(style: catalog.style(slug), size: .caption)
                 }
                 Text(SuggestionChipText.visible(suggestion))
                     .font(.caption.weight(.medium))
@@ -198,7 +270,8 @@ struct InboxTray: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(SuggestionChipText.accessibilityLabel(suggestion))
+        .accessibilityLabel(SuggestionChipText.accessibilityLabel(
+            suggestion, categoryName: suggestion.categorySlug.map { catalog.resolve($0).name }))
         .accessibilityHint("Suggestion. Fills the title, duration and category")
     }
 
@@ -217,7 +290,10 @@ struct InboxTray: View {
             TitleSample(title: $0.title, minutes: $0.durationMinutes, categorySlug: $0.categoryRaw, date: nil)
         }
         let history = calendars.blockHistory(endingAt: .now)
-        suggestionRow = ComposerSuggestionRow(history: history, templates: templates)
+        // Any slug the history or a template carries is offered: the catalog can draw all of
+        // them, a stand-in or archived one included (UI spec 1.4).
+        let slugs = Set((history + templates).compactMap(\.categorySlug))
+        suggestionRow = ComposerSuggestionRow(history: history, templates: templates, knownSlugs: slugs)
         suggestionRow.refresh(query: draft.title, now: .now)
     }
 
@@ -241,7 +317,7 @@ struct InboxTray: View {
             ForEach(tasks) { task in
                 Button { onArm(task) } label: {
                     HStack(spacing: 10) {
-                        CategoryGlyph(category: task.category)
+                        CategoryGlyph(style: catalog.style(task.categoryRaw))
                             .frame(width: 24)
 
                         VStack(alignment: .leading, spacing: 2) {
@@ -300,7 +376,7 @@ struct InboxTray: View {
         guard !title.isEmpty else { return }
         let task = TaskItem(title: title,
                             estimatedMinutes: draft.minutes,
-                            category: draft.category,
+                            categoryRaw: draft.category,
                             sortIndex: (tasks.map(\.sortIndex).max() ?? 0) + 1)
         context.insert(task)
         draft.resetTitle()

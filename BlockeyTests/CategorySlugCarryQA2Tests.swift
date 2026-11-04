@@ -29,7 +29,7 @@ struct CategorySlugCarryQA2Tests {
         #expect(task.category == .fallback)
         let url = try #require(BlockToken(categorySlug: task.categoryRaw).url)
         #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems == nil)
-        #expect(BlockToken(url: url)?.category == .fallback)
+        #expect(BlockToken(url: url)?.categorySlug == nil)
     }
 
     @Test("Slugs containing query-special characters survive token regeneration verbatim",

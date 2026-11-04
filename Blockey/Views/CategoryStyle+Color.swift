@@ -7,7 +7,7 @@ extension SRGB {
 }
 
 /// The SwiftUI face of `CategoryStyle`. Each colour resolves per appearance, so a chip follows
-/// light and dark without the view branching. No view uses this until task 3.7.
+/// light and dark without the view branching. 
 extension CategoryStyle {
     private func dynamic(_ pick: @escaping (CategoryColorRecord) -> SRGB) -> Color {
         Color(uiColor: UIColor { traits in

@@ -214,7 +214,7 @@ struct BlockTokenTests {
     func everyCategoryRoundTrips() throws {
         for category in BlockCategory.allCases {
             let parsed = try #require(BlockToken(url: BlockToken(id: id, category: category).url))
-            #expect(parsed.category == category)
+            #expect(parsed.categorySlug == category.rawValue)
         }
     }
 
@@ -223,19 +223,20 @@ struct BlockTokenTests {
         let url = try #require(URL(string: "blockey://block/\(id.uuidString)"))
         let parsed = try #require(BlockToken(url: url))
         #expect(parsed.id == id)
-        #expect(parsed.category == .fallback)
+        #expect(parsed.categorySlug == nil)
+        #expect(CategoryCatalog(definitions: []).resolve(parsed.categorySlug).slug == "deep")
         #expect(parsed.sourceTaskID == nil)
     }
 
     // Was "degrades to the fallback" and only checked the resolved category. The slug is now
     // kept, so this pins both halves: it *displays* as the fallback and *survives* a rewrite.
     // More cases live in BlockTokenSlugTests.
-    @Test("A category slug that no longer exists displays as the fallback but is kept")
+    @Test("A category slug that no longer exists is kept and draws as a stand-in")
     func unknownCategoryFallsBack() throws {
         let url = try #require(URL(string: "blockey://block/\(id.uuidString)?c=telepathy"))
         let parsed = try #require(BlockToken(url: url))
         #expect(parsed.id == id)
-        #expect(parsed.category == .fallback)
+        #expect(CategoryCatalog(definitions: []).resolve(parsed.categorySlug).origin == .standIn)
         #expect(parsed.categorySlug == "telepathy")
         #expect(BlockToken(url: parsed.url)?.categorySlug == "telepathy")
     }
@@ -244,7 +245,7 @@ struct BlockTokenTests {
     func emptyCategoryFallsBack() throws {
         let url = try #require(URL(string: "blockey://block/\(id.uuidString)?c="))
         let parsed = try #require(BlockToken(url: url))
-        #expect(parsed.category == .fallback)
+        #expect(CategoryCatalog(definitions: []).resolve(parsed.categorySlug).slug == "deep")
         #expect(parsed.categorySlug == nil)
     }
 
@@ -252,7 +253,7 @@ struct BlockTokenTests {
     func malformedTaskIDIsIgnored() throws {
         let url = try #require(URL(string: "blockey://block/\(id.uuidString)?c=admin&t=nonsense"))
         let parsed = try #require(BlockToken(url: url))
-        #expect(parsed.category == .admin)
+        #expect(parsed.categorySlug == "admin")
         #expect(parsed.sourceTaskID == nil)
     }
 
@@ -286,7 +287,7 @@ struct BlockTokenTests {
         // normalises case the token must still survive.
         let upperScheme = try #require(BlockToken(url: URL(string: "BLOCKEY://block/\(id.uuidString)?c=deep")))
         #expect(upperScheme.id == id)
-        #expect(upperScheme.category == .deepWork)
+        #expect(upperScheme.categorySlug == "deep")
 
         let upperHost = try #require(BlockToken(url: URL(string: "blockey://BLOCK/\(id.uuidString)?c=deep")))
         #expect(upperHost.id == id)
@@ -305,7 +306,8 @@ struct BlockTests {
                           kind: .fixed)
         #expect(block.isFixed)
         #expect(block.token == nil)
-        #expect(block.category == .fallback)
+        #expect(block.categorySlug == nil)
+        #expect(CategoryCatalog(definitions: []).resolve(block.categorySlug).slug == "deep")
     }
 
     @Test("A block reports the category carried in its token")
@@ -316,7 +318,7 @@ struct BlockTests {
                           kind: .block(token))
         #expect(!block.isFixed)
         #expect(block.token == token)
-        #expect(block.category == .health)
+        #expect(block.categorySlug == "health")
     }
 
     @Test("All-day events are kept out of the busy set")

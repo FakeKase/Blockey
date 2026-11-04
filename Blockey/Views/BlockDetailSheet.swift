@@ -14,7 +14,9 @@ struct BlockDetailSheet: View {
     @State private var title: String
     @State private var start: Date
     @State private var minutes: Int
-    @State private var category: BlockCategory
+    /// The raw slug as the block carries it, nil when it has none. Kept raw (not resolved) so an
+    /// untouched picker still saves nothing.
+    @State private var category: String?
 
     init(block: Block,
          onSave: @escaping (String, TimeRange, String?) -> Void,
@@ -27,20 +29,14 @@ struct BlockDetailSheet: View {
         _title = State(initialValue: block.title)
         _start = State(initialValue: block.range.start)
         _minutes = State(initialValue: Int(block.range.duration / 60))
-        _category = State(initialValue: block.category)
+        _category = State(initialValue: block.categorySlug)
     }
 
     /// Nil when the picker ends where it began, so a Save that changes nothing about the
-    /// category never rewrites the slug, and picking away and back doesn't either. Deliberately
-    /// cannot honour an explicit pick of the fallback on a block whose slug is unknown: keeping
-    /// the unknown slug is the safer error, and the picker will show unknown slugs properly later.
-    static func categoryToSave(initial: BlockCategory, current: BlockCategory) -> BlockCategory? {
-        current == initial ? nil : current
-    }
-
-    /// The same decision as a slug, which is what the write path takes.
-    static func slugToSave(initial: BlockCategory, current: BlockCategory) -> String? {
-        categoryToSave(initial: initial, current: current)?.rawValue
+    /// category never rewrites the slug, and picking away and back doesn't either. The rule is
+    /// pure and lives in `CategorySelection`.
+    static func slugToSave(initial: String?, current: String?) -> String? {
+        CategorySelection.slugToSave(initial: initial, current: current)
     }
 
     var body: some View {
@@ -52,14 +48,7 @@ struct BlockDetailSheet: View {
                     Stepper("\(minutes) minutes", value: $minutes, in: 5...480, step: 5)
                 }
 
-                Section("Category") {
-                    Picker("Category", selection: $category) {
-                        ForEach(BlockCategory.allCases) { option in
-                            Text(option.labelled).tag(option)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
+                CategoryPickerSection(selection: $category)
 
                 Section {
                     Button {
@@ -89,7 +78,7 @@ struct BlockDetailSheet: View {
                         let trimmed = title.trimmingCharacters(in: .whitespaces)
                         onSave(trimmed.isEmpty ? block.title : trimmed,
                                TimeRange(start: start, duration: TimeInterval(minutes * 60)),
-                               Self.slugToSave(initial: block.category, current: category))
+                               Self.slugToSave(initial: block.categorySlug, current: category))
                         dismiss()
                     }
                 }

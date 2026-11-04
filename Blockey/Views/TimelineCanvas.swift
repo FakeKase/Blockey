@@ -24,6 +24,8 @@ struct TimelineCanvas: View {
     let snapMinutes: Int
     let calendar: Calendar
 
+    @Environment(\.categoryCatalog) private var catalog
+
     var onSelectBlock: (Block) -> Void
     var onPlace: (Date) -> Void
     var onMove: (Block, TimeRange) -> Void
@@ -311,7 +313,7 @@ struct TimelineCanvas: View {
     /// whole block instead of stretching it.
     private func resizeGrabber(for block: Block) -> some View {
         Capsule()
-            .fill(block.category.tint.opacity(0.55))
+            .fill(catalog.style(block.categorySlug).spine.opacity(0.55))
             .frame(width: 26, height: 3)
             .padding(.bottom, 3)
             .contentShape(Rectangle().inset(by: -10))
@@ -374,16 +376,18 @@ private struct BlockChip: View {
     var availableHeight: CGFloat
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.categoryCatalog) private var catalog
 
     private var density: ChipDensity { ChipDensity(height: availableHeight) }
 
     var body: some View {
-        let tint = block.category.tint
+        let style = catalog.style(block.categorySlug)
+        let tint = style.spine
         HStack(alignment: density == .full ? .top : .center, spacing: 5) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(tint)
                 .frame(width: 3)
-            CategoryGlyph(category: block.category,
+            CategoryGlyph(style: style,
                           size: density == .titleOnly ? .caption2 : .caption)
             body(tint: tint)
         }
@@ -398,7 +402,7 @@ private struct BlockChip: View {
         // ones. Capped here only; every other screen scales all the way.
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(block.title), \(block.category.title)")
+        .accessibilityLabel("\(block.title), \(style.title)")
         .accessibilityValue(timeRangeText(block.range))
     }
 

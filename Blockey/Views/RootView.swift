@@ -32,12 +32,13 @@ private struct PermissionPrompt: View {
     var action: (() async -> Void)?
 
     @SwiftUI.State private var isRequesting = false
+    @Environment(\.categoryCatalog) private var catalog
 
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "calendar.day.timeline.left")
                 .font(.system(size: 52, weight: .light))
-                .foregroundStyle(BlockCategory.deepWork.tint)
+                .foregroundStyle(catalog.style(CategoryCatalog.fallbackSlug).spine)
 
             Text("Blockey plans around your real day")
                 .font(.title2.weight(.semibold))

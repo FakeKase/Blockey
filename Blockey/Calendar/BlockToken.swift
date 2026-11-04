@@ -35,13 +35,6 @@ struct BlockToken: Equatable, Sendable {
     /// token edited in Calendar.app, or by a newer build, isn't stripped by an older one.
     private(set) var unknownQueryItems: [URLQueryItem]
 
-    /// What the slug resolves to today. Reading is lossy by design (unknown means
-    /// `.fallback`); setting is an explicit choice and replaces the slug.
-    var category: BlockCategory {
-        get { categorySlug.flatMap(BlockCategory.init(rawValue:)) ?? .fallback }
-        set { categorySlug = newValue.rawValue }
-    }
-
     /// A copy with the slug replaced and everything else (id, source task, unknown query
     /// items) untouched. The update path uses this so an edit never mints a new identity.
     func replacingCategorySlug(_ slug: String?) -> BlockToken {

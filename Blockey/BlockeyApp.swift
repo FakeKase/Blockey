@@ -7,8 +7,10 @@ struct BlockeyApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(calendarService)
+            CategoryCatalogProvider {
+                RootView()
+                    .environment(calendarService)
+            }
         }
         .modelContainer(for: [
             TaskItem.self,

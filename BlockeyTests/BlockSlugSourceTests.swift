@@ -14,11 +14,10 @@ struct BlockSlugSourceTests {
         return Block(title: "b", range: range, kind: .block(token))
     }
 
-    @Test("categorySlug returns an unknown slug verbatim while category derives the fallback")
+    @Test("categorySlug returns an unknown slug verbatim")
     func unknownSlugVerbatim() {
         let b = block(slug: "u-งานบ้าน")
         #expect(b.categorySlug == "u-งานบ้าน")
-        #expect(b.category == .fallback)
     }
 
     @Test("categorySlug is nil for a tokenless block and for a fixed event")
@@ -29,11 +28,10 @@ struct BlockSlugSourceTests {
         #expect(block(slug: nil).categorySlug == nil)
     }
 
-    @Test("Known slugs agree with the derived enum", arguments: BlockCategory.allCases)
+    @Test("Known slugs come back as their raw value", arguments: BlockCategory.allCases)
     func knownSlugsAgree(category: BlockCategory) {
         let b = block(slug: category.rawValue)
         #expect(b.categorySlug == category.rawValue)
-        #expect(b.category == category)
     }
 
     @Test("Updating the slug keeps id, source task and unknown query items")
@@ -51,8 +49,8 @@ struct BlockSlugSourceTests {
 
     @Test("The detail sheet saves a slug only when the pick changed")
     func sheetSaveDecision() {
-        #expect(BlockDetailSheet.slugToSave(initial: .deepWork, current: .deepWork) == nil)
-        #expect(BlockDetailSheet.slugToSave(initial: .deepWork, current: .rest) == BlockCategory.rest.rawValue)
+        #expect(BlockDetailSheet.slugToSave(initial: "deep", current: "deep") == nil)
+        #expect(BlockDetailSheet.slugToSave(initial: "deep", current: "rest") == "rest")
     }
 
     @Test("A replaced Thai or delimiter-bearing slug survives url write and re-parse",
@@ -70,6 +68,6 @@ struct BlockSlugSourceTests {
     @Test("Saving a block with an unknown slug and no category pick passes no slug")
     func untouchedUnknownSlugPassesNil() {
         let b = block(slug: "u-งานบ้าน")
-        #expect(BlockDetailSheet.slugToSave(initial: b.category, current: b.category) == nil)
+        #expect(BlockDetailSheet.slugToSave(initial: b.categorySlug, current: b.categorySlug) == nil)
     }
 }

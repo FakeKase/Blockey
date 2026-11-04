@@ -7,7 +7,8 @@ struct ComposerDraft: Equatable {
 
     var title = ""
     var minutes = 30
-    var category: BlockCategory = .deepWork
+    /// A slug, never the enum: a custom, archived or unknown category must survive the draft.
+    var category: String = CategoryCatalog.fallbackSlug
     /// A remembered duration that is not a preset (say 50), shown as one more chip so the
     /// selection is visible. Cleared by `reset()`.
     var extraMinutes: Int?
@@ -18,15 +19,28 @@ struct ComposerDraft: Equatable {
         return (Self.presetDurations + [extraMinutes]).sorted()
     }
 
-    /// Fills title, duration and category. Never submits. A nil or unknown slug leaves the
-    /// category as it is.
+    /// Fills title, duration and category. Never submits. A nil or blank slug leaves the category
+    /// as it is; any other slug is accepted, because `CategoryCatalog.resolve` can draw all of them
+    /// and an archived or unknown one is the owner's own history (UI spec 1.4).
     mutating func apply(_ suggestion: TitleSuggestion) {
         title = ComposerTitle.forSubmit(suggestion.title)
         minutes = suggestion.minutes
         extraMinutes = Self.presetDurations.contains(suggestion.minutes) ? nil : suggestion.minutes
-        if let slug = suggestion.categorySlug, let known = BlockCategory(rawValue: slug) {
-            category = known
+        if let slug = suggestion.categorySlug, CategorySlug.hasContent(slug) {
+            category = slug
         }
+    }
+
+    /// The draft starts on the fallback category, which the owner may have archived. Nobody chose
+    /// it, so a new task must not land on a category that is "not offered for new work" (UI spec
+    /// 1.2). Moves to the first offered category; leaves it alone if everything is archived.
+    /// Call only for a draft nobody has touched: a category the owner picked or a suggestion
+    /// supplied stays, archived or not.
+    mutating func moveOffArchivedDefault(in catalog: CategoryCatalog) {
+        guard catalog.resolve(category).isArchived,
+              let offered = catalog.choices(current: nil).first(where: { !$0.isArchived }),
+              let slug = offered.slug else { return }
+        category = slug
     }
 
     /// After a task is added: the title clears, the duration and category stay (the user is
@@ -128,13 +142,12 @@ enum SuggestionChipText {
     /// The duration is last so middle truncation keeps it.
     static func visible(_ s: TitleSuggestion) -> String { "\(s.title) \u{00B7} \(duration(s.minutes))" }
 
-    /// Full title, duration and category name, never truncated.
-    static func accessibilityLabel(_ s: TitleSuggestion) -> String {
+    /// Full title, duration and category name, never truncated. `categoryName` is what the catalog
+    /// resolves the suggestion's slug to; the caller passes nil when the suggestion has no slug.
+    static func accessibilityLabel(_ s: TitleSuggestion, categoryName: String? = nil) -> String {
         let spoken = s.minutes == 1 ? "1 minute" : "\(s.minutes) minutes"
         var parts = [s.title, spoken]
-        if let slug = s.categorySlug, let category = BlockCategory(rawValue: slug) {
-            parts.append(category.title)
-        }
+        if let categoryName { parts.append(categoryName) }
         return parts.joined(separator: ", ")
     }
 }

@@ -127,6 +127,7 @@ struct TemplatesView: View {
 struct TemplateEditor: View {
     @Bindable var template: DayTemplate
     @Environment(\.modelContext) private var context
+    @Environment(\.categoryCatalog) private var catalog
 
     var body: some View {
         List {
@@ -140,7 +141,7 @@ struct TemplateEditor: View {
                         TemplateRowEditor(row: row)
                     } label: {
                         HStack(spacing: 10) {
-                            CategoryGlyph(category: row.category)
+                            CategoryGlyph(style: catalog.style(row.categorySlug))
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(row.title)
@@ -201,14 +202,7 @@ struct TemplateRowEditor: View {
                 DatePicker("Starts", selection: startBinding, displayedComponents: .hourAndMinute)
                 Stepper("\(row.durationMinutes) minutes", value: $row.durationMinutes, in: 5...480, step: 5)
             }
-            Section("Category") {
-                Picker("Category", selection: categoryBinding) {
-                    ForEach(BlockCategory.allCases) { option in
-                        Text(option.labelled).tag(option)
-                    }
-                }
-                .pickerStyle(.menu)
-            }
+            CategoryPickerSection(selection: categoryBinding)
         }
         .navigationTitle("Block")
         .navigationBarTitleDisplayMode(.inline)
@@ -227,7 +221,9 @@ struct TemplateRowEditor: View {
         }
     }
 
-    private var categoryBinding: Binding<BlockCategory> {
-        Binding { row.category } set: { row.category = $0 }
+    /// The row stores a non-optional slug; the picker's binding is optional so the block sheet
+    /// can share it. A nil can only come from the picker's own no-op rule, so it is ignored.
+    private var categoryBinding: Binding<String?> {
+        Binding { row.categorySlug } set: { if let slug = $0 { row.categorySlug = slug } }
     }
 }

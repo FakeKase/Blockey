@@ -60,7 +60,7 @@ enum Emoji {
 
 /// A category's face: its emoji, or its symbol where emoji are unavailable.
 struct CategoryGlyph: View {
-    let category: BlockCategory
+    let style: CategoryStyle
     var size: Font = .callout
     /// Symbols carry no colour of their own, so they take the category tint.
     /// Emoji bring their own and are left alone.
@@ -68,12 +68,12 @@ struct CategoryGlyph: View {
 
     var body: some View {
         if Emoji.isSupported {
-            Text(category.emoji)
+            Text(style.emoji)
                 .font(size)
         } else {
-            Image(systemName: category.symbolName)
+            Image(systemName: style.symbolName)
                 .font(size)
-                .foregroundStyle(tinted ? AnyShapeStyle(category.tint) : AnyShapeStyle(.primary))
+                .foregroundStyle(tinted ? AnyShapeStyle(style.spine) : AnyShapeStyle(.primary))
         }
     }
 }

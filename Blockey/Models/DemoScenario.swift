@@ -57,6 +57,28 @@ enum DemoScenario {
         return args[index + 1]
     }
 
+    /// `-blockeyCustomCategories` seeds an active custom category, an archived one, and three
+    /// blocks: one on the custom category, one on the archived one and one on a slug no
+    /// definition has (a stand-in). `-blockeyManyCategories` adds two more customs, which takes
+    /// the composer past its eight-chip limit. Simulator only, like everything in this file.
+    static var wantsCustomCategories: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyCustomCategories")
+    }
+    static var wantsManyCategories: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyManyCategories")
+    }
+
+    /// `-blockeyOpenBlock <title>` opens that block's sheet; `-blockeyCategoryList` then pushes
+    /// the category list from its Category row.
+    static var openBlockTitle: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-blockeyOpenBlock"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+    static var wantsCategoryList: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyCategoryList")
+    }
+
     /// `-blockeyHoldBanner` stops the banner timer, so a screenshot can catch it.
     static var holdsBanner: Bool {
         ProcessInfo.processInfo.arguments.contains("-blockeyHoldBanner")
@@ -199,6 +221,24 @@ enum DemoScenario {
     }
 
     @MainActor
+    private static func seedCustomCategories(context: ModelContext) {
+        func make(_ slug: String, _ name: String, _ symbol: String, palette: Int, sort: Int,
+                  archived: Bool = false) {
+            let value = CategoryDefinitionValue(slug: slug, name: name, emoji: "\u{1F4D6}", symbolName: symbol,
+                                                paletteIndex: palette, customColorHex: nil, sortIndex: sort,
+                                                archivedAt: archived ? .now : nil)
+            _ = try? CategoryDefinition.insertIfFree(value, in: context)
+        }
+        make("u-reading", "Reading", "book.fill", palette: 8, sort: 6)
+        make("u-old-project", "Old project", "archivebox.fill", palette: 10, sort: 7, archived: true)
+        if wantsManyCategories {
+            make("u-garden", "Garden", "leaf.fill", palette: 9, sort: 8)
+            make("u-family", "Family and friends and a very long name", "heart.fill", palette: 4, sort: 9)
+        }
+        try? context.save()
+    }
+
+    @MainActor
     static func apply(calendars: CalendarService, context: ModelContext, on date: Date) {
         // Blocks live in the calendar and survive app reinstalls, so a repeat
         // demo run would stack a second plan on top of the first.
@@ -222,6 +262,18 @@ enum DemoScenario {
                                                range: TimeRange(start: start,
                                                                 duration: TimeInterval(minutes * 60)),
                                                categorySlug: category.rawValue)
+            }
+        }
+
+        if wantsCustomCategories || wantsManyCategories {
+            seedCustomCategories(context: context)
+            for (title, hour, slug) in [("Novel", 14, "u-reading"),
+                                        ("Oldproject", 15, "u-old-project"),
+                                        ("Parcel", 16, "u-errands")] {
+                let start = DaySchedule.timeOfDay(hour * 60, on: date)
+                _ = try? calendars.createBlock(title: title,
+                                               range: TimeRange(start: start, duration: 3600),
+                                               categorySlug: slug)
             }
         }
 

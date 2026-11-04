@@ -93,7 +93,7 @@ struct ComposerSuggestionRowTests {
         d.apply(TitleSuggestion(title: "Gym", minutes: 45, categorySlug: "health"))
         #expect(d.title == "Gym")
         #expect(d.minutes == 45)
-        #expect(d.category == .health)
+        #expect(d.category == "health")
         #expect(d.extraMinutes == nil)
     }
 
@@ -106,13 +106,25 @@ struct ComposerSuggestionRowTests {
         #expect(d.durations == ComposerDraft.presetDurations)
     }
 
-    @Test func nilOrUnknownSlugLeavesTheCategoryAlone() {
+    @Test func nilOrBlankSlugLeavesTheCategoryAlone() {
         var d = ComposerDraft()
-        d.category = .rest
+        d.category = "rest"
         d.apply(TitleSuggestion(title: "Gym", minutes: 30, categorySlug: nil))
-        #expect(d.category == .rest)
-        d.apply(TitleSuggestion(title: "Gym", minutes: 30, categorySlug: "not-a-slug"))
-        #expect(d.category == .rest)
+        #expect(d.category == "rest")
+        d.apply(TitleSuggestion(title: "Gym", minutes: 30, categorySlug: "  "))
+        #expect(d.category == "rest")
+    }
+
+    @Test func anyNonBlankSlugIsAccepted_customArchivedAndUnknownAlike() {
+        var d = ComposerDraft()
+        d.apply(TitleSuggestion(title: "Gym", minutes: 30, categorySlug: "u-errands"))
+        #expect(d.category == "u-errands")
+        d.apply(TitleSuggestion(title: "Gym", minutes: 30, categorySlug: "งานบ้าน"))
+        #expect(d.category == "งานบ้าน")
+    }
+
+    @Test func draftStartsOnTheFallbackSlug() {
+        #expect(ComposerDraft().category == CategoryCatalog.fallbackSlug)
     }
 
     @Test func applyCapsAndFlattensTheTitle() {
@@ -143,7 +155,7 @@ struct ComposerSuggestionRowTests {
     @Test func accessibilityLabelHasFullTitleDurationAndCategory() {
         let long = String(repeating: "a", count: 120)
         let s = TitleSuggestion(title: long, minutes: 45, categorySlug: "health")
-        #expect(SuggestionChipText.accessibilityLabel(s) == "\(long), 45 minutes, Health")
+        #expect(SuggestionChipText.accessibilityLabel(s, categoryName: "Health") == "\(long), 45 minutes, Health")
         let noCategory = TitleSuggestion(title: "Gym", minutes: 45, categorySlug: nil)
         #expect(SuggestionChipText.accessibilityLabel(noCategory) == "Gym, 45 minutes")
     }
@@ -173,7 +185,7 @@ struct ComposerSuggestionRowTests {
         r.suppress(forText: d.title)
         r.refresh(query: d.title, now: now)   // the debounce firing after the tap
         #expect(r.visibleChips(for: d.title).isEmpty)
-        #expect(d.minutes == 45 && d.category == .health)
+        #expect(d.minutes == 45 && d.category == "health")
     }
 
     @Test func extraChipFromAnEarlierTapDoesNotChangeTheSubmittedMinutes() {

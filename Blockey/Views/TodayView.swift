@@ -275,6 +275,10 @@ struct TodayView: View {
                 demoOpenPlanSheet()
             }
             if DemoScenario.wantsSettings { sheet = .settings }
+            if let title = DemoScenario.openBlockTitle {
+                try? await _Concurrency.Task.sleep(for: .milliseconds(800))
+                selectedBlock = contents.blocks.first { $0.title == title }
+            }
             if DemoScenario.wantsInbox {
                 inboxDetent = .medium
                 sheet = .inbox
@@ -738,7 +742,7 @@ struct TodayView: View {
             // Through the planner so the day is counted toward the streak (issue #7).
             let block = try planner.addBlock(title: DefaultTitles.newBlock,
                                              range: TimeRange(start: start, duration: length),
-                                             categorySlug: BlockCategory.deepWork.rawValue,
+                                             categorySlug: CategoryCatalog.fallbackSlug,
                                              inputs: planInputs)
             reload()
             selectedBlock = block

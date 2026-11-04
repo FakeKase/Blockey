@@ -8,7 +8,7 @@ xcrun simctl bootstatus "$SIM_NAME" -b >/dev/null 2>&1 || true
 xcrun simctl uninstall "$SIM_NAME" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$SIM_NAME" "$APP_PATH"
 xcrun simctl privacy "$SIM_NAME" grant calendar "$BUNDLE_ID" >/dev/null 2>&1 || true
-xcrun simctl launch "$SIM_NAME" "$BUNDLE_ID" -blockeyDemo -blockeyNow "${BLOCKEY_NOW:-10:20}" ${BLOCKEY_STAMP:+-blockeyStamp} ${BLOCKEY_EVENING:+-blockeyEvening} ${BLOCKEY_SETTINGS:+-blockeySettings} >/dev/null
+xcrun simctl launch "$SIM_NAME" "$BUNDLE_ID" -blockeyDemo -blockeyNow "${BLOCKEY_NOW:-10:20}" ${BLOCKEY_STAMP:+-blockeyStamp} ${BLOCKEY_EVENING:+-blockeyEvening} ${BLOCKEY_SETTINGS:+-blockeySettings} ${BLOCKEY_EXTRA} >/dev/null
 sleep 6
 xcrun simctl io "$SIM_NAME" screenshot "$SHOT" >/dev/null 2>&1
 echo "demo launched; screenshot -> $SHOT"

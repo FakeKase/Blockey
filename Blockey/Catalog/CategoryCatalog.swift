@@ -160,6 +160,18 @@ struct CategoryCatalog: Sendable {
                                 customColorHex: nil, sortIndex: sortIndex, archivedAt: nil)
     }
 
+    /// One past the largest `sortIndex` among unarchived categories, so a category added now
+    /// lands last in the picker (UI spec 3.5). Built-ins without a row count at their default
+    /// position. Never below the built-in count's end when nothing is customised.
+    var nextSortIndex: Int {
+        var highest = -1
+        for (i, b) in Self.builtIns.enumerated() where !resolve(b.slug).isArchived {
+            highest = Swift.max(highest, overrides[b.slug]?.sortIndex ?? i)
+        }
+        for def in customs where def.archivedAt == nil { highest = Swift.max(highest, def.sortIndex) }
+        return highest + 1
+    }
+
     // MARK: Rules
 
     /// Every slug in use: built-ins, rows, archived ones included. Feed this to
