@@ -256,7 +256,9 @@ Details:
   as prefix because Thai has no word spaces. Rank exact > prefix > word-prefix > substring, then by
   a recency-weighted score (14-day half-life), then by title.
 - **Remember** the most recent use's minutes and slug. A non-preset duration (say 50 min) shows as
-  an extra chip. An archived or unknown remembered category is not restored.
+  an extra chip. ~~An archived or unknown remembered category is not restored.~~ Superseded by
+  UI spec 1.4 and ADR 005 (phase 5.1 addendum, row 40): a chip applies the remembered slug even when
+  it is archived or unknown, because it is the owner's own history.
 - **UI:** one row of up to 3 chips under the field (`🧠 Title · 45m`), shown while the field has text.
   A tap fills title, duration and category, and does not submit. One line per chip, middle-truncated,
   full title in the accessibility label. Empty history shows nothing. Never auto-complete inside the
@@ -382,6 +384,12 @@ Colour work depends on redesign Story 2 (#12), which owns the six measured recor
 - 5.1 qa-engineer and architect review the work against ADRs 005 and 006. Grep every mechanism
   the ADRs name against the source before marking them Accepted. Update the CLAUDE.md known
   gaps: close gap 6 only once restoring settings is verified. **S**
+  **ADR 005, architect pass done 2026-11-04:** 85 matches, 13 differs, 1 missing (addendum at the
+  end of the ADR). Still **Proposed**, blocked on its follow-up F1, the install-over migration
+  check for `CategoryDefinition` (**S**, qa-engineer, simulator). Code follow-ups F2 (retire the
+  `BlockCategory` shim: **S** for the comment and dead code, **M** to delete the enum) and F3
+  (stale comments, **S**) do not block. Gap 6 closes when F1 passes and the suite is green.
+  ADR 006 not yet done.
 
 Rough total: **8 to 12 working days** as first planned; the custom-colour tasks (3.3b, 3.4b, 3.8b,
 three **M**) add about 1.5 days, so **9.5 to 13.5** from 2026-11-04. Phase 1 takes about half a day

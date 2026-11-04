@@ -1,7 +1,11 @@
 # ADR 005: User-defined categories and Backup v2
 
-Status: proposed. Not to be marked accepted until phase 5.1 of `docs/feedback-plan-2026-11.md`
-has checked every mechanism named here against the code.
+Status: proposed. Phase 5.1 ran on 2026-11-04 (addendum at the end): 85 of 99 rows match, 13
+differ (nine amended here because the code is right, two owned by redesign stories, two code
+follow-ups) and 1 is missing. **Acceptance is blocked by that one missing check:**
+the install-over migration check for adding `CategoryDefinition` to the container has never been
+run, and it is the only thing standing between this ADR and the tasks and templates on the
+owner's phone. Mark this accepted once that check passes and `scripts/test.sh` is green.
 Date: 2026-11-03
 
 Owner sign-off (2026-11-03) on three decisions that go beyond the plan:
@@ -24,41 +28,53 @@ Feedback from the user (`docs/feedback-plan-2026-11.md`, 1a): "I want custom cat
 owner's answer (Q3): add new ones, let the user rename, re-emoji and recolour the six built-ins,
 and make deleting a category archive it.
 
-Everything in this ADR is a decision. None of it is built. Where the text says what the code does
-*today*, the line has been checked against the source on 2026-11-03.
+When this ADR was written, none of it was built. Phase 1 and phase 3 have since built all of it
+(phase 3 in 6c3e723..3158fc5 on `sprint-1`). The section below describes the code as it was on
+2026-11-03, which is the problem the decision answers. Each bullet now also says where that code
+went; line numbers marked "now" were checked on 2026-11-04.
 
-### What the code does today
+### What the code did on 2026-11-03
 
 - `BlockCategory` is a fixed six-case `enum BlockCategory: String` (`Models/BlockCategory.swift:10`)
   with `.fallback = .deepWork` (`:87`). Its doc comment (`:5-9`) says it is "deliberately a fixed
   enum rather than a user-editable SwiftData model" so that "there is no colour table to lose".
+  The enum is still there (now the same lines), as a shim; see the addendum, row 96.
 - The category rides in the block's token as `c=<slug>` (`Calendar/BlockToken.swift:8`), and
-  parsing maps it straight through the enum: `value("c").flatMap(BlockCategory.init(rawValue:)) ??
-  .fallback` (`BlockToken.swift:55`). **An unknown slug silently becomes Deep work**, and
-  `BlockeyTests/EdgeCaseTests.swift:222` asserts exactly that.
+  parsing mapped it straight through the enum: `value("c").flatMap(BlockCategory.init(rawValue:)) ??
+  .fallback` (`BlockToken.swift:55` then). **An unknown slug silently became Deep work**, and
+  `BlockeyTests/EdgeCaseTests.swift:222` asserted exactly that. Fixed in phase 1: the slug is kept
+  verbatim (now `BlockToken.swift:86`), and the test now asserts a stand-in (now
+  `EdgeCaseTests.swift:234-239`).
 - The collapse is not only a display problem, because several paths write the collapsed value back:
-  - `BlockDetailSheet` seeds its picker from the already-collapsed `block.category` (`:29`) and
-    passes it on every Save (`:74-78`). `CalendarService.update` then rebuilds the url whenever a
-    category is passed (`CalendarService.swift:252-255`). Opening an unknown-slug block and tapping
-    Save permanently rewrites its slug to `deep`.
+  - `BlockDetailSheet` seeded its picker from the already-collapsed `block.category` (`:29` then)
+    and passed it on every Save (`:74-78` then). `CalendarService.update` then rebuilt the url
+    whenever a category was passed (`CalendarService.swift:252-255` then). Opening an unknown-slug
+    block and tapping Save permanently rewrote its slug to `deep`. Fixed in phase 1: the sheet seeds
+    from the raw slug (now `BlockDetailSheet.swift:32`) and passes a slug only when it changed (now
+    `:81`, via `CategorySelection.slugToSave`, `Catalog/CategoryPicking.swift:130-132`); `update`
+    rewrites the url only for a non-nil slug (now `CalendarService.swift:427-436`).
   - Return to inbox and Clear the day used to build the new `TaskItem` from `block.category` in
     `TodayView`, so a block with an unknown slug came back to the inbox as Deep work. Fixed in
     phase 1: both paths now live in `Blockey/Planning/DayPlanner.swift` (`DayPlanner.returnToInbox`
     and `DayPlanner.clear`, moved there in task 2.0) and take `block.token?.categorySlug`, falling
-    back to `deep` only when the token carries no slug.
-  - Restore maps every task and template row through the enum (`Models/Backup.swift:94`, `:107`).
-    Fixed in phase 1: restore now stores `categoryRaw` verbatim (`Backup.swift:111`, `:126` as of
-    2026-11-04). Other `Backup.swift` line numbers in this section are from 2026-11-03; the file has
-    since grown (`activityDays`, issue #7).
-- `BlockToken.url` always writes `c=` (`BlockToken.swift:64`), so a block whose token had no
-  category gains `c=deep` on its first rewrite. `:70` ends in a force unwrap, which CLAUDE.md forbids.
-- `TaskItem.categoryRaw` and `TemplateRow.categoryRaw` are already plain `String`s
-  (`Models/TaskItem.swift:14`, `Models/DayTemplate.swift:50`). Only their computed accessors know
-  about the enum.
-- Backup is version 1 (`Backup.swift:16`), holds tasks, templates and assignments, and carries no
-  settings and no categories. Restore never reads `version`. Decoding happens in
-  `BackupFile.init(configuration:)` (`:178-185`), before the user is asked to confirm, and restore
-  rolls back if the save fails (`:117-126`).
+    back to `deep` only when the token carries no slug (now `DayPlanner.swift:606`, `:703`, `:795`).
+  - Restore mapped every task and template row through the enum (`Models/Backup.swift:94`, `:107`
+    then). Fixed in phase 1: restore stores `categoryRaw` verbatim (now `Backup.swift:255`, `:270`).
+- `BlockToken.url` always wrote `c=` (`BlockToken.swift:64` then), so a block whose token had no
+  category gained `c=deep` on its first rewrite, and `:70` ended in a force unwrap. Fixed in phase
+  1: `c=` is written only when there is a slug (now `BlockToken.swift:101-103`), and `url` is
+  optional with no force unwrap (now `:95-110`).
+- `TaskItem.categoryRaw` and `TemplateRow.categoryRaw` were already plain `String`s
+  (`Models/TaskItem.swift:14`, now `Models/DayTemplate.swift:56`). Only their computed accessors
+  knew about the enum. Both now have `categorySlug` accessors over the same storage (now
+  `TaskItem.swift:88-91`, `DayTemplate.swift:81-84`).
+- Backup was version 1 (`Backup.swift:16` then), held tasks, templates and assignments, and carried
+  no settings and no categories. Restore never read `version`. Decoding happened before the user was
+  asked to confirm, and restore rolled back if the save failed. Now: `currentVersion = 2`
+  (`Backup.swift:19-21`); decoding is `BlockeyBackup.decode` (`:161-169`), called from
+  `SettingsView.stageRestore` (`Views/SettingsView.swift:220`) before the confirmation alert, not
+  from `BackupFile.init(configuration:)`, which the importer no longer uses; the rollback is
+  `Backup.swift:306-316`.
 
 ### What the earlier ADRs promised and the code never did
 
@@ -86,7 +102,7 @@ archive date, keyed by slug. Rows exist only for custom categories and for built
 customised. The six built-ins stay in code, so they always render correctly with no rows at all.
 
 Costs: one new model, and a catalog passed to views in place of the enum at the call sites (53
-references to `BlockCategory`, `.category` or `categoryRaw` across 15 files today). Definitions are
+references to `BlockCategory`, `.category` or `categoryRaw` across 15 files on 2026-11-03). Definitions are
 local data, so deleting the app without a backup loses names, emoji and chosen colours.
 
 Buys: rename and recolour are a write to one row and never touch a calendar event. Past blocks
@@ -114,8 +130,12 @@ looked up, and a lookup that fails still renders something honest.
 - The six built-ins keep their slugs forever: `deep`, `meeting`, `admin`, `personal`, `health`,
   `rest`. Their default name, emoji, symbol and palette index move into `Catalog/` as plain data.
 - A built-in the user has customised gets a `CategoryDefinition` row with the built-in's slug. The
-  row overrides the defaults. Deleting the row is "Reset to default", which is also the escape hatch
-  for a customisation gone wrong.
+  row overrides the defaults. ~~Deleting the row is "Reset to default".~~ **Amended 2026-11-04
+  (phase 5.1):** "Reset to default" writes the factory name, emoji, symbol and swatch back into the
+  row and clears `customColorHex`, and **keeps the row**, so a reset category keeps its position and
+  archive state (UI spec Q3, `docs/ui-spec-issue-1.md:852-854`; code `Catalog/CategoryDraft.swift:130-144`).
+  Pixels are identical either way. Deleting the row still yields the defaults, so it remains the
+  data-level escape hatch for a customisation gone wrong; no screen offers it.
 - A built-in can be archived like any other category (an override row with `archivedAt` set). At
   least one category must stay unarchived. A nil or absent slug still resolves to `deep` even when
   `deep` is archived; archived means "not offered", never "not rendered".
@@ -152,6 +172,16 @@ looked up, and a lookup that fails still renders something honest.
   compared through `TitleKey.normalize` (ADR 006). Two identical names in one picker cannot be told
   apart. The plan names only built-ins; extending the rule to all active categories is this ADR's
   decision, for the same reason.
+- **Amended 2026-11-04 (phase 5.1):** names are capped at **24 characters** in the editor (UI spec
+  Q2, `Catalog/EmojiSuggestions.swift:80-90`), because long names break chips and the timeline. The
+  slug cap (32 clusters) is independent.
+- **Amended 2026-11-04 (phase 5.1):** the duplicate-name rule applies to the editor, Add as
+  category and un-archiving (`Planning/CategoryStore.swift:211-213`), **not to a backup restore**,
+  which upserts the file's definitions as they are (`Models/Backup.swift:289-304`). The file was
+  valid on the phone that wrote it, and refusing or renaming part of it would make restore lossy.
+  A clash needs two different slugs with one display name (a built-in renamed "Gym" on one phone,
+  `u-gym` on the other), so it is rare; if it happens, the emoji tells them apart, and opening
+  either in the editor shows the duplicate message and blocks Save until one is renamed.
 - No cap on the number of categories. Past the palette size, colours repeat deterministically and
   the required emoji keeps them apart.
 
@@ -166,9 +196,16 @@ looked up, and a lookup that fails still renders something honest.
   something is never a silent change. A template row left pointing at an archived category still
   stamps with that slug, and the block renders from the archived definition. This is deliberate:
   archiving hides a category from future choices; it does not rewrite history.
+- **Amended 2026-11-04 (phase 5.1): one deliberate exception.** A title-suggestion chip in the
+  composer fills the slug its history carries even when that category is archived or unknown, and
+  the draft then shows it as the current value (UI spec 1.4, `docs/ui-spec-issue-1.md:154-159`;
+  code `Views/InboxTray.swift:376-379`). The reason is the same as for template rows: it is the
+  owner's own history, and the chip is a shortcut for repeating it, not a picker offering choices.
+  The plan (task 3.3, "An archived or unknown remembered category is not restored") and ADR 006 say
+  the opposite and are superseded on this point.
 - **Save only writes what changed.** `BlockDetailSheet.onSave` passes the category only if the user
-  changed it. `update` already takes an optional (`CalendarService.swift:242`), so the fix is in the
-  sheet.
+  changed it. `update` already took an optional (now `CalendarService.swift:415`), so the fix was in
+  the sheet (now `BlockDetailSheet.swift:81`).
 
 ### Unknown slugs get a stand-in, not the fallback
 
@@ -197,9 +234,12 @@ A fixed, measured `CategoryPalette` of about 10 to 12 light/dark pairs. ~~No fre
 **Amended 2026-11-04:** the palette comes first, and an "Other…" option allows one custom colour per
 category. See "Amendment: palette + custom colour" at the end; the rules below still hold for every
 palette swatch. Every swatch must meet the fill-contrast floor in both modes (design review M10), and the built-in
-swatches must be pairwise distinguishable above a ΔE floor (M9); both are tests. The six current
-built-in tints (`BlockCategory.swift:68-77`) are the first candidates for six of the slots, so
-nothing on screen changes unless the designer's measurements say it must. A stored `paletteIndex`
+swatches must be pairwise distinguishable above a ΔE floor (M9); both are tests. The six
+built-in tints of 2026-11-03 (`BlockCategory.swift:68-77`) were the first candidates for six of the
+slots, so nothing on screen changes unless the designer's measurements say it must. **As built
+(phase 5.1):** the measurements did say so. Slots 0 to 5 hold the measured records from
+`docs/category-palette.md` (`Catalog/CategoryPalette.swift:27-32`), not the old tints; `admin` is
+now teal and the dark spines are lifted, as UI spec section 8 expects. A stored `paletteIndex`
 outside the range wraps modulo the count, so a backup from a build with a larger palette cannot
 crash an older one. Colour is never the only signal; emoji is required.
 
@@ -219,7 +259,7 @@ struct CategoryDefinitionValue: Hashable, Sendable {
 }
 
 struct ResolvedCategory: Hashable, Sendable {
-    let slug: String?          // nil only for the fallback of an absent slug
+    let slug: String?          // amended 2026-11-04: never nil as built; an absent slug resolves to "deep"
     let name: String
     let emoji: String
     let symbolName: String
@@ -247,7 +287,9 @@ struct BlockToken {
     var id: UUID
     var categorySlug: String?      // verbatim, NFC; nil when absent, empty or whitespace
     var sourceTaskID: UUID?
-    var extraQueryItems: [URLQueryItem]   // round-tripped untouched
+    private(set) var unknownQueryItems: [URLQueryItem]   // round-tripped untouched
+                                                       // (amended 2026-11-04: was `extraQueryItems`)
+    func replacingCategorySlug(_ slug: String?) -> BlockToken   // the update path; keeps id and items
 }
 
 // Models/CategoryDefinition.swift
@@ -260,17 +302,20 @@ struct BlockToken {
 }
 ```
 
-`CategoryDefinition` is registered in the container (`BlockeyApp.swift:13-18`). `TaskItem` and
+`CategoryDefinition` is registered in the container (now `BlockeyApp.swift:15-22`). `TaskItem` and
 `TemplateRow` keep the field name `categoryRaw` and gain slug accessors beside it, so there is no
 rename and no migration of existing rows. Landmine: SwiftData's `.unique` resolves a conflicting
 insert as an upsert rather than an error, so "a duplicate slug is rejected" has to be checked by the
-catalog before insert, never left to the attribute.
+catalog before insert, never left to the attribute. As built: every add path goes through
+`CategoryDefinition.insertIfFree` (`Models/CategoryDefinition.swift:53-61`), which counts rows with
+the slug first; `CategoryDefinitionModelTests.swift:30` pins the upsert behaviour.
 
 The token rules that phase 1 ships first, on their own, because they stop the loss before any
 feature exists: keep `c=` verbatim; keep unknown query items, in order, duplicates included; an
 absent category stays absent on rewrite; an empty or whitespace `c=` counts as absent; the first of
 duplicate `c=` items wins; no force unwrap. `category` survives as a computed fallback until every
-caller takes slugs.
+caller takes slugs. (As built, every caller now takes slugs and the token's computed `category` is
+gone; only the `init(category:)` convenience remains, `BlockToken.swift:46`.)
 
 ### Backup v2
 
@@ -283,8 +328,11 @@ normal to have an old build on the phone and a new file in iCloud Drive, or the 
   file fail to import.
 - **Settings** carried: day start and end, snap, hidden calendar IDs, alarm on/off and minutes
   before, and the plan's new `Skip preview`. Not carried: one-time flags such as
-  `hasSeededStarterTemplates` (`BlockeyApp.swift:31`) and the device-specific `blockeyCalendarID`
+  `hasSeededStarterTemplates` (now `BlockeyApp.swift:35`; also `hasSeenStarterTemplatesNote` and
+  `hasSeededStreakHistory`, which arrived later) and the device-specific `blockeyCalendarID`
   (`CalendarService.swift:60`). This **closes known gap 6** once restoring settings is verified.
+  As built, settings restore is covered by `BackupV2Tests.swift:128`, `:152`, `:326`, `:357`; gap 6
+  closes when those pass in a run of the suite.
 - **Version gate.** A file whose `version` is greater than this build's is refused before the
   confirmation dialog, with "This backup is from a newer version of Blockey. Update the app, then
   try again." It is never half-read.
@@ -297,27 +345,27 @@ normal to have an old build on the phone and a new file in iCloud Drive, or the 
   is only ever used for membership (`CalendarService.swift:184-186`), so an ID that matches no
   calendar on this device hides nothing.
 - **Slugs are restored verbatim.** Tasks and template rows keep unknown and archived slugs exactly;
-  the collapse that was at `Backup.swift:94` and `:107` went in phase 1. A task whose slug has no
-  definition renders as a stand-in, like a block.
+  the collapse that was at `Backup.swift:94` and `:107` went in phase 1 (verbatim now at `:255`,
+  `:270`). A task whose slug has no definition renders as a stand-in, like a block.
 - **Category colour** rides in `Category.customColorHex: String?`, optional. See the amendment at
   the end for its shape, its validation and why it is kept verbatim.
 - **Categories merge by slug; restore never deletes a definition.** This is the one deliberate
-  exception to "replace rather than merge" (`Backup.swift:80-84`). A definition is referenced by
+  exception to "replace rather than merge" (now `Backup.swift:233-241`). A definition is referenced by
   calendar events that are not in the backup, so deleting one would damage data the file cannot put
   back. Each definition in the file is upserted by slug; definitions not in the file are left alone.
 - **nil versus empty `categories`.** `nil` means the file predates categories (any v1 file).
   `[]` means a v2 phone with no customisations. **Both change nothing.** The distinction is stated
   here so nobody later "fixes" `[]` into a wipe.
 - **The restore warning counts categories**, as it already counts tasks and templates
-  (`Backup.swift:147-158`).
+  (`PendingRestore.warning`, now `Backup.swift:370-389`).
 
 **An older build reading a v2 file** decodes it (unknown keys are ignored) and ignores the new
-fields. That is not the whole cost: today's build also collapses every custom slug on tasks and
-template rows to `deep` while restoring (`Backup.swift:94`, `:107`). The plan says an old build loses
+fields. That is not the whole cost: the build of 2026-11-03 also collapsed every custom slug on tasks
+and template rows to `deep` while restoring (`Backup.swift:94`, `:107` then). The plan says an old build loses
 "only the new fields", and that is wrong for the build on the phone today. The mitigation is to ship
 the verbatim restore in phase 1 with the token fix, well before any build can mint a custom slug,
 so that by the time v2 files exist the installed build no longer collapses them. **Shipped in phase
-1** (`Backup.swift:111`, `:126`), so the mitigation is in place before any custom slug exists.
+1** (now `Backup.swift:255`, `:270`), so the mitigation is in place before any custom slug exists.
 
 ### Thai slugs survive iCloud (resolved 2026-11-04)
 
@@ -370,7 +418,7 @@ trailer), not a change to slug minting, because slugs already in calendars canno
 
 **`BlockMeta` is still not built, and nothing here needs it.** Known gap 8 is unchanged. Worth
 noting for whoever revisits it: the one job ADR 002 gave `BlockMeta`, the link back to a source task,
-already rides in the token as `t=` (`BlockToken.swift:8`, `:56`).
+already rides in the token as `t=` (`BlockToken.swift:8`, now `:87` and `:104-106`).
 
 **Not verified**
 - ~~Gap 7.~~ **Closed 2026-11-04.** Task 0.3 passed on the owner's phone (ADR 002 addendum), so it
@@ -378,11 +426,15 @@ already rides in the token as `t=` (`BlockToken.swift:8`, `:56`).
   future iOS or iCloud change would show up as stand-ins, not as data loss.
 - That adding `CategoryDefinition` to the container migrates an existing store with no data loss.
   Adding a model should be a lightweight change, but it is checked the way ADR 003 checked
-  reinstalls: install over a populated simulator build and query the store.
-- The palette. No swatch has been measured yet.
-- The custom-colour derivation. Its lightness and chroma targets come from the measured palette, so
-  they cannot be set until Story 2 (#12) lands, and how a derived colour looks next to the curated
-  ones is a judgement for a device screenshot, not a test.
+  reinstalls: install over a populated simulator build and query the store. **Still not run as of
+  phase 5.1 (2026-11-04); this is what blocks acceptance.**
+- ~~The palette. No swatch has been measured yet.~~ Measured: twelve records in
+  `docs/category-palette.md`, recomputed by `CategoryPaletteTests` and `CategoryPalettePinTests`.
+- The custom-colour derivation. Its targets are now set (`DerivationTargets.measured`,
+  `Catalog/CustomCategoryColor.swift:28-36`) and pinned by the hue sweep, but how a derived colour
+  looks next to the curated ones is still a judgement for a device screenshot, not a test.
+- The floors are judged against `ColorSurfaces.assumedPendingStory1`, the designer's assumed canvas
+  and meeting fill, until redesign Story 1 (#11) publishes real surfaces.
 - Old-build behaviour on a v2 file is reasoned from the code above, not observed.
 
 **Escape hatch**
@@ -414,7 +466,7 @@ Matches phase 1 and phase 3 of `docs/feedback-plan-2026-11.md`. Test names are i
 9. `backend-engineer`: Backup v2 tests (A.5) with checked-in v1 and v2 fixtures, including a v2
    fixture without `customColorHex`, then the implementation.
 10. `qa-engineer` and `architect`: phase 5.1. Grep every mechanism above before this ADR is marked
-    accepted.
+    accepted. **Architect pass done 2026-11-04** (addendum below); acceptance waits on F1.
 
 ## Amendment: 2026-11-04, palette + custom colour (owner decision)
 
@@ -424,11 +476,13 @@ opens the system `ColorPicker` and warns when the result will be hard to read or
 This reverses "No free colour picker" in the Palette section. Everything else in that section
 (measured swatches, both-mode floors, modulo wrap, emoji required) still holds for the palette.
 
-Checked against the source on 2026-11-04 before writing: there is no `CategoryStyle`,
+Checked against the source on 2026-11-04 before writing: there was no `CategoryStyle`,
 `CategoryPalette`, `CategoryDefinition`, `paletteIndex`, `ColorPicker`, contrast or ΔE code anywhere
-in `Blockey/`. Colours today are six hard-coded RGB pairs (`BlockCategory.swift:68-77`), and chips
-derive fill and border from them with alpha (`TimelineCanvas.swift:393-394`). Every mechanism
-below is new.
+in `Blockey/`. Colours were six hard-coded RGB pairs (`BlockCategory.swift:68-77`), and chips
+derived fill and border from them with alpha (`TimelineCanvas.swift:393-394` then). Every mechanism
+below was new. All of it is now built; see the phase 5.1 addendum. Chips still derive fill and
+border from the spine with alpha (now `TimelineCanvas.swift:397-398`), deliberately, until
+redesign Story 3.
 
 ### What is stored, and what wins
 
@@ -443,7 +497,9 @@ below is new.
 - **Writes:** choosing a palette swatch sets `paletteIndex` and **clears** `customColorHex`.
   Choosing Other… sets `customColorHex` and leaves `paletteIndex` alone, so a bad hex later still
   lands on the swatch the category had before. Picking Other… on an untouched built-in creates its
-  override row as usual. Reset to default (deleting the row) drops both.
+  override row as usual. Reset to default ~~(deleting the row) drops both~~ writes the factory
+  `paletteIndex` and clears `customColorHex`, keeping the row (amended 2026-11-04, see "Built-ins
+  stay in code").
 - Only the one picked colour is stored, never the derived values. Derivation is a pure function, so
   improving it later recolours every custom category consistently, and there is nothing derived to
   go stale in a backup.
@@ -525,11 +581,11 @@ test pins that.
 
 ### Too close to the meeting style or another category
 
-"Meeting style" means the **fixed-event chip** (`FixedEventChip`, `TimelineCanvas.swift:438`), not
+"Meeting style" means the **fixed-event chip** (`FixedEventChip`, now `TimelineCanvas.swift:442`), not
 the built-in `meeting` category, which is an ordinary block category with a hue.
 - Against meetings: `looksLikeMeeting` when the derived fill in either mode is under ΔE 15 from the
   meeting fill or below the chroma gap. Today the meeting fill is `Color.primary` at 5 to 6 percent
-  alpha (`TimelineCanvas.swift:462`), so until Story 1 and Story 3 make it opaque, the surfaces value
+  alpha (now `TimelineCanvas.swift:466`), so until Story 1 and Story 3 make it opaque, the surfaces value
   is that alpha composited over the canvas colour.
 - Against categories: `closeTo(slug)` for each **unarchived** category other than the one being
   edited, palette-coloured or custom, under ΔE 10 in either mode. Archived categories are skipped:
@@ -591,6 +647,26 @@ and #12 do not collide:
 5. `ResolvedCategory` replaces `paletteIndex` with `colorChoice` and `colors` (contract above), so
    no view ever looks up the palette itself.
 
+**As built (phase 5.1, 2026-11-04).** Points 1, 3, 4 and 5 hold. Two differ, both accepted:
+- Point 2: #1 built `SRGB`, `CategoryColorRecord`, `CategoryColors` and all twelve records itself,
+  in b9e96a2 (tagged #1 and #12), from the designer's `docs/category-palette.md`, because Story 2's
+  code had not started. The split of ownership no longer matters: the types exist once, in
+  `Catalog/`, and Story 2 consumes them.
+- Point 1, second half: Story 1 has not published surfaces. `ColorSurfaces.assumedPendingStory1`
+  (`Catalog/ColorSurfaces.swift:13-22`) holds the designer's assumed values, in one declaration, so
+  Story 1 changes one line and every floor test reruns.
+- Point 4: `CategoryStyle` stores `colors: CategoryColors` and exposes `spine`, `fill`, `border` and
+  `onFill` through a SwiftUI extension (`Views/CategoryStyle+Color.swift:11-21`). The
+  `CategoryStyle(BlockCategory)` adapter no longer exists; only `CategoryStyle(ResolvedCategory)`
+  and a memberwise init do.
+- Not a difference in the seam but worth stating: the timeline chip reads only `style.spine`, and
+  paints its fill and border as the spine at 17 to 30 percent and 45 to 70 percent alpha
+  (`TimelineCanvas.swift:384-398`). The opaque `fill` and `border` that the floors, the palette
+  tests and the `closeTo` and `looksLikeMeeting` warnings measure are drawn in the editor preview
+  and picker tiles, not yet on the timeline. That is the UI spec's scope line (section 8: "keep
+  every opacity ... exactly as it is"); opaque fills are redesign Story 3. Until it lands, a warning
+  describes the chip the timeline will draw, not the one it draws today.
+
 ### Consequences of this amendment
 
 - **Easy:** a category past the palette size can get its own colour; built-ins can be recoloured
@@ -602,3 +678,169 @@ and #12 do not collide:
 - **Escape hatch:** if custom colours prove a mistake, `CategoryCatalog.resolve` ignores
   `customColorHex` (one line) and every category falls back to its `paletteIndex`. The stored values
   stay, so the decision can be reversed again without data loss.
+
+## Addendum: phase 5.1 verification, 2026-11-04
+
+Architect, against `sprint-1` at 3158fc5. Every mechanism, type, function, field and rule this ADR
+names was grepped and read in the source, not inferred from the docs. Paths are under `Blockey/`
+unless they start with `BlockeyTests/`. "Differs" rows say which side was right; where the code
+was right the body above is amended and marked "Amended 2026-11-04 (phase 5.1)" or "As built".
+The suite was **not run** in this pass; test files are cited as evidence the behaviour is pinned,
+not that it passes.
+
+**Counts: 85 matches, 13 differs, 1 missing.**
+
+| # | Mechanism | Where in the code (file:line) | Status |
+|---|---|---|---|
+| | **Token and phase 1** | | |
+| 1 | `BlockToken.categorySlug`, verbatim, NFC | `Calendar/BlockToken.swift:32`, `:61-64`, `:86` | matches |
+| 2 | Unknown query items kept, in order, duplicates included | `BlockToken.swift:36`, `:88`, `:107` | differs: named `unknownQueryItems` and `private(set)`, not `extraQueryItems`. Code right; contract amended |
+| 3 | An absent category stays absent on rewrite | `BlockToken.swift:101-103` | matches |
+| 4 | Empty or whitespace `c=` counts as absent | `BlockToken.swift:61-64` | matches |
+| 5 | First of duplicate `c=` items wins | `BlockToken.swift:80-86` | matches |
+| 6 | No force unwrap; `url` optional; callers keep the old url on nil | `BlockToken.swift:91-110`; `Calendar/CalendarService.swift:429-435` | matches |
+| 7 | Token's computed `category` retired once callers take slugs | gone; only `init(category:)` remains, `BlockToken.swift:46` | matches |
+| 8 | Block sheet passes the category only when changed | `Views/BlockDetailSheet.swift:32`, `:81`; `Catalog/CategoryPicking.swift:124-138` | matches |
+| 9 | `update` takes an optional slug and rewrites the url only when given one | `CalendarService.swift:412-436` | matches |
+| 10 | Return to inbox and Clear carry the token's slug | `Planning/DayPlanner.swift:606`, `:703`, `:795` | matches |
+| 11 | Restore stores task and row slugs verbatim | `Models/Backup.swift:255`, `:270` | matches |
+| 12 | The unknown-slug test asserts a stand-in, not the collapse | `BlockeyTests/EdgeCaseTests.swift:221-239` | matches |
+| 13 | `categoryRaw` kept, slug accessors beside it, no migration | `Models/TaskItem.swift:14`, `:88-91`; `Models/DayTemplate.swift:56`, `:81-84` | matches |
+| 14 | `Block` and `CalendarService` take and return slugs | `Calendar/Block.swift:64`; `CalendarService.swift:264-274`, `:415` | matches |
+| | **Built-ins** | | |
+| 15 | Six fixed built-in slugs, defaults as plain data in `Catalog/` | `Catalog/CategoryCatalog.swift:77-86` | matches |
+| 16 | An override row with the built-in's slug wins over defaults | `CategoryCatalog.swift:118-125` | matches |
+| 17 | Reset to default deletes the row | `Catalog/CategoryDraft.swift:130-144`; `Views/CategoryEditor.swift:164-167` | differs: writes defaults into the row and keeps it (UI spec Q3). Code right; amended |
+| 18 | Built-ins archive through an override row | `Planning/CategoryStore.swift:77-88` | matches |
+| 19 | At least one category stays unarchived | `CategoryCatalog.swift:244-248`; `CategoryStore.swift:72`, `:100` | matches |
+| 20 | A nil or absent slug resolves to `deep`, even when `deep` is archived | `CategoryCatalog.swift:113-117`; `BlockeyTests/CategoryCatalogTests.swift:56` | matches |
+| 21 | `ResolvedCategory.slug` is nil for an absent slug | `CategoryCatalog.swift:43-45` | differs: never nil; an absent slug resolves to `"deep"` so views can key on it. Code right; contract amended |
+| 22 | New work never starts on an archived category | `CategoryCatalog.swift:169-173`; `Views/TodayView.swift:748`; `Views/TemplatesView.swift:185` | matches |
+| | **Slugs** | | |
+| 23 | `u-` prefix on custom slugs | `Catalog/CategorySlug.swift:12`, `:43` | matches |
+| 24 | NFKC, lowercase, grapheme walk keeping marks, separators collapse | `CategorySlug.swift:94-124` | matches |
+| 25 | Body capped at 32 grapheme clusters | `CategorySlug.swift:15`, `:110-112` | matches |
+| 26 | Emoji-only name mints `u-` plus 6 of `a-z0-9`, RNG injected | `CategorySlug.swift:20-21`, `:30-41` | matches |
+| 27 | Collisions checked against all slugs, archived included; suffix after the cap | `CategorySlug.swift:43-48`; `CategoryCatalog.swift:238` | matches |
+| 28 | A slug never changes after creation | `CategoryStore.swift:227-241` | matches |
+| 29 | Slugs are case-sensitive | `BlockToken.swift:57-63`; `BlockeyTests/CategoryCatalogTests.swift:82` | matches |
+| 30 | No `.toLatin` fallback | no `toLatin` or `stripDiacritics` anywhere in `Blockey/` | matches |
+| | **Names** | | |
+| 31 | Empty, whitespace and invisible-only names refused; ends trimmed | `CategorySlug.swift:18`, `:85-89`; `CategoryCatalog.swift:254`, `:269-271` | matches |
+| 32 | No name equal to an unarchived category's, via `TitleKey.normalize` | `CategoryCatalog.swift:253-262`; enforced again at the write, `CategoryStore.swift:211-213` | matches |
+| 33 | The name rule during a backup restore | `Backup.swift:289-304` (not applied) | differs: ADR was silent; restore upserts names as the file has them. Code right; amended |
+| 34 | Name length | `Catalog/EmojiSuggestions.swift:80-90` | differs: 24-character cap (UI spec Q2) the ADR did not have. Code right; amended |
+| 35 | No cap on the number of categories | none; composer collapses past 8, `CategoryPicking.swift:112-122` | matches |
+| | **Archive** | | |
+| 36 | Delete means archive; blocks keep rendering from the archived definition | `CategoryStore.swift:71-94`; `CategoryCatalog.swift:118-125` | matches |
+| 37 | Move-to prompt counts tasks and rows; nothing preselected; may decline | `Views/CategoryArchiveSheet.swift:12-13`, `:98-107`; `CategoryStore.swift:53-55`, `:134-148` | matches |
+| 38 | Pickers offer unarchived categories plus the current value | `CategoryCatalog.swift:151-163`; `CategoryPicking.swift:18-29` | matches |
+| 39 | A template row on an archived category stamps with that slug | `DayTemplate.swift:44-46`; `DayPlanner.swift:45-46` | matches |
+| 40 | Archived categories are never applied to new work | `Views/InboxTray.swift:376-379` | differs: a suggestion chip applies an archived or unknown slug (UI spec 1.4). Code right; amended as an exception |
+| 41 | A move target is never archived or unknown | `CategoryStore.swift:127-132` | matches |
+| | **Stand-ins** | | |
+| 42 | Name recovered from the slug | `CategorySlug.swift:54-60` | matches |
+| 43 | 32-bit FNV-1a modulo palette count, never `hashValue`, pinned by a test | `CategorySlug.swift:65-80`; `BlockeyTests/CategorySlugTests.swift:152-165` | matches |
+| 44 | Generic glyph 🏷️ and symbol `tag` | `CategoryCatalog.swift:88-91` | matches |
+| 45 | Add as category inserts the exact slug, FNV index, no hex | `CategoryCatalog.swift:213-220`; `Views/CategoryPicker.swift:35-90` (plus a rename path when the name clashes, `CategoryPicking.swift:104-110`) | matches |
+| 46 | Resolution on read; nothing written on launch | `Views/CategoryCatalogEnvironment.swift:17-27` | matches |
+| 47 | A stand-in never resolves to `.custom` | `CategoryCatalog.swift:292-300`; `CategoryCatalogTests.swift:147` | matches |
+| | **Palette** | | |
+| 48 | Fixed, measured `CategoryPalette` of 12 light/dark records | `Catalog/CategoryPalette.swift:26-41` | matches |
+| 49 | Fill-contrast floor and pairwise ΔE are tests | `BlockeyTests/CategoryPaletteTests.swift:55`, `:71`, `:87` | matches |
+| 50 | Old built-in tints as the first six slots | `CategoryPalette.swift:27-32` vs `Models/BlockCategory.swift:68-77` | differs: replaced by measured records, as UI spec section 8 expects. Code right; amended |
+| 51 | Out-of-range `paletteIndex` wraps modulo | `CategoryPalette.swift:47-53`; `CategoryCatalog.swift:285-290` | matches |
+| 52 | Emoji required | `CategoryCatalog.swift:264-266`; `CategoryStore.swift:201-203`; `CategoryDraft.swift:116-120` | matches |
+| | **Contract and model** | | |
+| 53 | `CategoryDefinitionValue` | `CategoryCatalog.swift:5-31` | matches |
+| 54 | `ResolvedCategory` fields and `Origin` | `CategoryCatalog.swift:40-56` | matches |
+| 55 | `CategoryCatalog` `init`, `resolve`, `choices`, `validate` | `CategoryCatalog.swift:99`, `:113`, `:158`, `:253` | matches |
+| 56 | `CategorySlug.mint` and `displayName` | `CategorySlug.swift:30`, `:54` | matches |
+| 57 | `@Model CategoryDefinition`, unique slug, `customColorHex` in v1 | `Models/CategoryDefinition.swift:12-34` | matches |
+| 58 | Registered in the model container | `BlockeyApp.swift:15-22` | matches |
+| 59 | `.unique` upsert guarded by a check before insert | `CategoryDefinition.swift:53-61`; `CategoryCatalog.swift:236-241`; `BlockeyTests/CategoryDefinitionModelTests.swift:30` | matches |
+| 60 | `Catalog/` is Foundation only | no SwiftUI, SwiftData, EventKit or UIKit import in `Catalog/` | matches |
+| 61 | Install-over migration check for the new model | none; `CategoryDefinition.swift:11` itself says unverified | **missing** |
+| | **Backup v2** | | |
+| 62 | `version` 2; optional `categories` and `settings` | `Backup.swift:19-37` | matches |
+| 63 | Settings carried; one-time flags and calendar ID not carried | `Backup.swift:53-69`, `:328-355` | matches |
+| 64 | Newer version refused before the confirmation, with the stated copy | `Backup.swift:150-169`, `:186`; `Views/SettingsView.swift:220-226` | matches |
+| 65 | Where decoding happens | `SettingsView.swift:220` calls `BlockeyBackup.decode` | differs: not `BackupFile.init(configuration:)`, which import no longer uses. Code right; Context amended |
+| 66 | Validate before the first delete; clamps; duplicate slugs first-wins and counted | `Backup.swift:176-226`, `:246` | matches |
+| 67 | Unknown calendar IDs kept | `Backup.swift:216-220`; `CalendarService.swift:184-186` | matches |
+| 68 | Categories merge by slug; restore never deletes a definition | `Backup.swift:289-304` | matches |
+| 69 | `nil` and `[]` categories both change nothing | `Backup.swift:31-34`, `:190` | matches |
+| 70 | The restore warning counts categories | `Backup.swift:370-389` | matches |
+| 71 | Rollback on a failed save; settings written only after it | `Backup.swift:306-316` | matches |
+| 72 | Checked-in v1, v2 and v2-without-`customColorHex` fixtures | `BlockeyTests/Fixtures/*.json`; `BlockeyTests/BackupV2Tests.swift:49-84` | matches |
+| 73 | `Category.customColorHex` carried and canonicalised on restore | `Backup.swift:39-51`, `:203` | matches |
+| | **Custom colour (amendment)** | | |
+| 74 | `#RRGGBB` grammar; uppercase writer | `Catalog/SRGB.swift:26-41`; `CategoryCatalog.swift:273-281` | matches |
+| 75 | A valid hex wins; anything else falls back to `paletteIndex` | `CategoryCatalog.swift:285-290` | matches |
+| 76 | A swatch clears the hex; Other… keeps the index | `CategoryCatalog.swift:16-30` | matches |
+| 77 | Only the picked colour is stored; derivation on read | `CategoryPalette.swift:57-65` | matches |
+| 78 | `SRGB`, `CategoryColorRecord`, `CategoryColors`, `ColorChoice` | `SRGB.swift:6-72`; `CategoryCatalog.swift:34-38` | matches |
+| 79 | Derive in OKLCH: target lightness, chroma factor and cap, chroma-only bisection | `Catalog/CustomCategoryColor.swift:59-72`; `Catalog/CategoryColorMath.swift:104-130` | matches |
+| 80 | `DerivationTargets.measured` | `CustomCategoryColor.swift:19-37` | matches |
+| 81 | Greys under chroma 0.02 derive to greys | `CustomCategoryColor.swift:53-55`, `:61-66` | matches |
+| 82 | WCAG 2 contrast and CIE76 ΔE for measurement | `CategoryColorMath.swift:38-71` | matches |
+| 83 | The assessment floors table | `Catalog/ColorSurfaces.swift:29-37`; `CustomCategoryColor.swift:79-113` | matches |
+| 84 | Concerns worst first, per mode | `CustomCategoryColor.swift:74-113` | matches |
+| 85 | Every curated swatch assesses to `[]` | `CategoryPaletteTests.swift:87` | matches |
+| 86 | Hue-sweep test | `BlockeyTests/CustomCategoryColorTests.swift:40` | matches |
+| 87 | Warn only; Save never blocked by a concern | `CategoryDraft.swift:116-120` | matches |
+| 88 | Other… row: `ColorPicker` without opacity, P3 clamp, two-mode preview, one line | `Views/CategoryColorSection.swift:20-46`, `:92-129`, `:133-173`; `SRGB.swift:43-48` | matches |
+| 89 | `closeTo` skips the edited and archived categories | `CategoryDraft.swift:148-155` | matches |
+| 90 | Canvas and meeting fill as numeric surfaces from Story 1 | `ColorSurfaces.swift:13-22` | differs: designer's assumed values pending redesign Story 1 (#11). Owned by Story 1; amended |
+| | **The `CategoryStyle` seam** | | |
+| 91 | Colours are numbers in `Catalog/`, not asset-catalog names | `CategoryPalette.swift`; `SRGB.swift` | matches |
+| 92 | Story 2 owns the value types, #1 the palette | built together in b9e96a2 (#1, #12) | differs: #1 built them. Harmless; amended |
+| 93 | `CategoryStyle` is a plain struct, never a switch over the enum | `Catalog/CategoryStyle.swift:7-23`; `Views/CategoryStyle+Color.swift:11-21` | matches |
+| 94 | Chips draw the category's `fill` and `border` | `Views/TimelineCanvas.swift:384-398` | differs: the timeline paints the spine at alpha, deliberately until redesign Story 3 (UI spec section 8). Owned by Story 3; amended |
+| 95 | Views ask the catalog only (the escape hatch) | `CategoryCatalogEnvironment.swift:29-32`; the one direct palette read is the editor's swatch grid, `CategoryColorSection.swift:54-63` | matches |
+| | **What this supersedes** | | |
+| 96 | The enum's "deliberately fixed" comment is superseded; the shim is deleted once callers take slugs | `Models/BlockCategory.swift:5-9`, `:63`, `:79-85` | differs: **code wrong**. The comment still argues against this ADR; `tint` and `labelled` have no callers; the enum survives in `StarterData.swift:18-29`, `DemoScenario.swift:284`, `:313-316`, the `TaskItem` and `TemplateRow` convenience inits, `BlockCategory.fallback.rawValue` (`DayPlanner.swift:46`, `:606`, `:703`, `:795`; `DayTemplate.swift:45`) and `ComposerSuggestionRow.swift:76`. Follow-up F2 |
+| 97 | `BlockMeta` not built and not needed | no match in `Blockey/` | matches |
+| 98 | The source-task link rides in the token as `t=` | `BlockToken.swift:87`, `:104-106` | matches |
+| 99 | Code comments that restate this ADR's backup scope | `BlockeyApp.swift:36-38`; `Backup.swift:26-28`; `CategoryDefinition.swift:7`; `ColorSurfaces.swift:18-19` | differs: **code wrong**. They say Skip preview is not backed up, that `version` stays 1, that Backup v2 has not landed, and cite `TimelineCanvas.swift:462` (now `:466`). Follow-up F3 |
+
+### Follow-ups
+
+Code that is wrong, or verification that is owed. Sizes as in the plan: **S** under 2 hours,
+**M** about half a day. None is a data-loss bug in the code as written.
+
+- **F1. Install-over migration check (row 61). S. Blocks acceptance.** `qa-engineer`, simulator
+  only. Build the last commit before `CategoryDefinition` existed (find it with
+  `git log --diff-filter=A -- Blockey/Models/CategoryDefinition.swift`), populate tasks, templates,
+  assignments and streak days, install `sprint-1` over it without deleting the app, and query the
+  store: every count unchanged, `CategoryDefinition` empty, the app launches. Record the result in
+  this ADR's "Not verified" list.
+- **F2. Retire the `BlockCategory` shim (row 96).** Two sizes, and the first can ship alone:
+  - **S:** replace the doc comment at `BlockCategory.swift:5-9` with one that points at this ADR
+    and says the enum is only the built-ins' factory data, and delete the uncalled `tint`,
+    `components` and `labelled`. That also drops its `import SwiftUI`.
+  - **M:** delete the enum. Move `StarterData` and `DemoScenario` to slugs, replace
+    `BlockCategory.fallback.rawValue` with `CategoryCatalog.fallbackSlug`, drop the enum
+    convenience inits and `DayTemplate.category(forRowID:)`, take `knownSlugs` without a default in
+    `ComposerSuggestionRow`, and move the tests that iterate `BlockCategory.allCases` to
+    `CategoryCatalog.builtIns`. `CategoryCatalogTests.swift:28` pins the two copies together until
+    then.
+- **F3. Stale comments (row 99). S.** Correct the four comments named in row 99. No behaviour
+  changes.
+
+Already planned elsewhere, so not new work: real surfaces (row 90) are redesign Story 1 (#11);
+opaque chip fills (row 94) are redesign Story 3. Until Story 3 lands, the colour warnings describe
+the chip the timeline will draw, not the one it draws today.
+
+Outside this ADR but found on the way: ADR 006 and plan task 3.3 still say "an archived or
+unknown remembered category is not restored", which row 40 supersedes. ADR 006's own phase 5.1
+pass should amend it.
+
+### Acceptance
+
+Not accepted. Nothing in the code is missing, but row 61 is: the one check that adding a model
+cannot cost the owner the tasks and templates that exist only on the phone (ADR 003). Mark this
+ADR accepted when F1 passes and `scripts/test.sh` is green. F2 and F3 do not block it.
+
+Known gap 6 (backup omits settings) closes on the same condition: settings are carried and
+restored (rows 63, 66, 71), and `BackupV2Tests` pins it, but this pass did not run the suite.
