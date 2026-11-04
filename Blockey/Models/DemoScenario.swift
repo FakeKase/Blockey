@@ -155,6 +155,25 @@ enum DemoScenario {
             check("deleted block is reported: \(partial.message.text)", partial.message.text == "Removed 2 of 3 blocks")
             check("only the originals remain",
                   calendars.contents(for: day, ignoring: [], calendar: cal).blocks.count == 2)
+
+            // 3. The update path keeps `c=` unless a slug is passed (task 3.6), through real EventKit.
+            let tid = UUID(), tsrc = UUID()
+            let thai = "u-งานบ้าน"
+            let orig = BlockToken(url: URL(string: "blockey://block/\(tid.uuidString)?c=\(thai.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&t=\(tsrc.uuidString)&x=keep"))
+            try calendars.createBlock(title: "Custom", range: span(11, 12), token: orig, notes: nil, alarmOffsets: [])
+            func current() -> Block? {
+                calendars.contents(for: day, ignoring: [], calendar: cal).blocks.first { $0.token?.id == tid }
+            }
+            check("seeded custom-slug block reads back", current()?.categorySlug == thai)
+            if let b = current() { try calendars.update(b, title: "Renamed") }
+            check("title-only edit keeps token verbatim", current()?.token == orig && current()?.title == "Renamed")
+            if let b = current() { try calendars.update(b, range: span(13, 14)) }
+            check("time-only edit keeps token verbatim", current()?.token == orig && current()?.range == span(13, 14))
+            if let b = current() { try calendars.update(b, categorySlug: "rest") }
+            let swapped = current()?.token
+            check("category edit changes only the slug",
+                  swapped?.categorySlug == "rest" && swapped?.id == tid && swapped?.sourceTaskID == tsrc
+                    && swapped?.unknownQueryItems == orig?.unknownQueryItems)
         } catch {
             report.append("FAIL threw: \(error.localizedDescription)")
         }
@@ -202,7 +221,7 @@ enum DemoScenario {
                 _ = try? calendars.createBlock(title: title,
                                                range: TimeRange(start: start,
                                                                 duration: TimeInterval(minutes * 60)),
-                                               category: category)
+                                               categorySlug: category.rawValue)
             }
         }
 

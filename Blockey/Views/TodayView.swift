@@ -240,7 +240,7 @@ struct TodayView: View {
             BlockDetailSheet(
                 block: block,
                 onSave: { title, range, category in
-                    perform { try calendars.update(block, title: title, range: range, category: category) }
+                    perform { try calendars.update(block, title: title, range: range, categorySlug: category) }
                 },
                 onDelete: { perform { try calendars.delete(block) } },
                 onReturnToInbox: { returnToInbox(block) }

@@ -42,6 +42,14 @@ struct BlockToken: Equatable, Sendable {
         set { categorySlug = newValue.rawValue }
     }
 
+    /// A copy with the slug replaced and everything else (id, source task, unknown query
+    /// items) untouched. The update path uses this so an edit never mints a new identity.
+    func replacingCategorySlug(_ slug: String?) -> BlockToken {
+        var copy = self
+        copy.categorySlug = Self.clean(slug)
+        return copy
+    }
+
     init(id: UUID = UUID(), category: BlockCategory = .fallback, sourceTaskID: UUID? = nil) {
         self.init(id: id, categorySlug: category.rawValue, sourceTaskID: sourceTaskID)
     }

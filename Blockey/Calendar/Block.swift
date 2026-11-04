@@ -59,7 +59,12 @@ struct Block: Identifiable, Equatable, Sendable {
     }
 
     var isFixed: Bool { kind == .fixed }
-    var category: BlockCategory { token?.category ?? .fallback }
+    /// The slug as stored in the event's token, verbatim: the source of truth for a block's
+    /// category. Nil for a fixed event, a tokenless block, or a token with no usable `c=`.
+    var categorySlug: String? { token?.categorySlug }
+    /// Derived convenience for display until views move onto the catalog (3.7). Lossy: an
+    /// unknown slug reads as `.fallback`. Never feed this back into a write.
+    var category: BlockCategory { categorySlug.flatMap(BlockCategory.init(rawValue:)) ?? .fallback }
 
     init(event: EKEvent, blockeyCalendarID: String?) {
         let token = BlockToken(url: event.url)

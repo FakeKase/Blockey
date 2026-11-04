@@ -258,18 +258,8 @@ final class CalendarService {
 
     // MARK: - Writing
 
-    @discardableResult
-    func createBlock(title: String,
-                     range: TimeRange,
-                     category: BlockCategory,
-                     sourceTaskID: UUID? = nil,
-                     alarmMinutesBefore: Int? = nil) throws -> Block {
-        try createBlock(title: title, range: range, categorySlug: category.rawValue,
-                        sourceTaskID: sourceTaskID, alarmMinutesBefore: alarmMinutesBefore)
-    }
-
-    /// The slug form, for work that already carries one (inbox tasks, template rows). Going
-    /// through `BlockCategory` would turn a slug this build doesn't know into the fallback.
+    /// Takes a slug, never `BlockCategory`: going through the enum would turn a slug this build
+    /// doesn't know into the fallback. Callers holding an enum pass `.rawValue`.
     @discardableResult
     func createBlock(title: String,
                      range: TimeRange,
@@ -422,7 +412,7 @@ final class CalendarService {
     func update(_ block: Block,
                 title: String? = nil,
                 range: TimeRange? = nil,
-                category: BlockCategory? = nil) throws {
+                categorySlug: String? = nil) throws {
         guard access.isGranted else { throw Failure.notPermitted }
         guard block.isEditable else { throw Failure.notEditable }
         guard let event = event(for: block) else { throw Failure.eventNotFound }
@@ -432,9 +422,10 @@ final class CalendarService {
             event.startDate = range.start
             event.endDate = range.end
         }
-        if let category {
-            var token = block.token ?? BlockToken()
-            token.category = category
+        // Only a caller that explicitly picked a new category passes a slug; nil leaves `c=`
+        // exactly as it is, including a slug this build does not know.
+        if let categorySlug {
+            let token = (block.token ?? BlockToken()).replacingCategorySlug(categorySlug)
             if let url = token.url {
                 event.url = url
             } else {

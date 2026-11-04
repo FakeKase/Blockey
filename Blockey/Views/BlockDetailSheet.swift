@@ -5,7 +5,7 @@ import SwiftUI
 struct BlockDetailSheet: View {
     let block: Block
     /// The category is nil unless it differs from the original (see `categoryToSave`).
-    var onSave: (String, TimeRange, BlockCategory?) -> Void
+    var onSave: (String, TimeRange, String?) -> Void
     var onDelete: () -> Void
     var onReturnToInbox: () -> Void
 
@@ -17,7 +17,7 @@ struct BlockDetailSheet: View {
     @State private var category: BlockCategory
 
     init(block: Block,
-         onSave: @escaping (String, TimeRange, BlockCategory?) -> Void,
+         onSave: @escaping (String, TimeRange, String?) -> Void,
          onDelete: @escaping () -> Void,
          onReturnToInbox: @escaping () -> Void) {
         self.block = block
@@ -36,6 +36,11 @@ struct BlockDetailSheet: View {
     /// the unknown slug is the safer error, and the picker will show unknown slugs properly later.
     static func categoryToSave(initial: BlockCategory, current: BlockCategory) -> BlockCategory? {
         current == initial ? nil : current
+    }
+
+    /// The same decision as a slug, which is what the write path takes.
+    static func slugToSave(initial: BlockCategory, current: BlockCategory) -> String? {
+        categoryToSave(initial: initial, current: current)?.rawValue
     }
 
     var body: some View {
@@ -84,7 +89,7 @@ struct BlockDetailSheet: View {
                         let trimmed = title.trimmingCharacters(in: .whitespaces)
                         onSave(trimmed.isEmpty ? block.title : trimmed,
                                TimeRange(start: start, duration: TimeInterval(minutes * 60)),
-                               Self.categoryToSave(initial: block.category, current: category))
+                               Self.slugToSave(initial: block.category, current: category))
                         dismiss()
                     }
                 }
