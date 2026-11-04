@@ -427,3 +427,8 @@ Show only the worst concern, worst first, as the ADR specifies. Save stays enabl
 ## Verification, 2026-11-04
 
 Recomputed by script from the hex values above (WCAG 2 relative luminance, CIE76 in CIELAB with a D65 white, the same assumed canvas and meeting fills). Every floor passes in both modes and the minimums agree with the hand figures to within 0.05: border on the light canvas 3.17 (Pink), fill-to-canvas luminance in light 1.35 (Mint), fill against the light meeting fill ΔE 20.96 (Red), weakest pair in light ΔE 11.59 (Teal/Sky), weakest pair in dark ΔE 11.78 (Gold/Lime). The colour-blindness figures and the DerivationTargets were not rechecked.
+
+## Owner decisions, 2026-11-04
+
+- Keep all 12 swatches. The owner has no colour-vision deficiency, so the deuteranopia and protanopia collapses above are noted, not acted on. The required emoji still separates categories.
+- Custom colours keep the picked hue and derive lightness per mode (the recommendation). The picker says so in one line: "Blockey adjusts brightness for light and dark mode. Your pick sets the hue."
