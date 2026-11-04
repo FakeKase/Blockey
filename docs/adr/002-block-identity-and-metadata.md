@@ -303,3 +303,22 @@ lost still appears, still moves, and still works — it falls back to a default 
 forgets which inbox task it came from. That property was the reason the token was allowed to
 be the only metadata channel, and it is what makes the remaining unknown survivable rather
 than load-bearing.
+
+## Addendum: 2026-11-04, the iCloud round trip passes on a real phone
+
+**Test.** Plan task 0.3, run by the owner on their iPhone with an iCloud-backed Blockey calendar,
+using the debug-only probe in Settings → Developer (`Calendar/TokenProbe.swift`, commit c522ebb).
+The probe wrote one block whose token carried a percent-encoded Thai slug with combining vowel and
+tone marks and a space (`c=งานลึก ทดสอบ`) plus a `t=` task id. The owner saw the event in Calendar,
+moved it on another client, let the change sync back to the phone, and ran Check.
+
+**Result.** Check reported `PASS`: the token id, the Thai slug and the task link all parsed back
+unchanged after an iCloud sync and an edit made outside Blockey. This closes CLAUDE.md gap 7 and
+the half of this ADR's open question that the 2026-09-07 addendum left unverified.
+
+**Not recorded.** The owner reported the verdict, not the full screenshot, so whether the url
+stayed byte-identical and whether `eventIdentifier` changed are unknown. Neither affects the
+verdict: identity rides on the parsed token, not on either of those.
+
+**Consequence.** Custom category slugs may be stored as typed, Thai included. The pre-decided
+`applyingTransform(.toLatin)` fallback in `docs/feedback-plan-2026-11.md` task 0.3 is not needed.
