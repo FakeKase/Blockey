@@ -11,6 +11,13 @@ Owner sign-off (2026-11-03) on three decisions that go beyond the plan:
 3. Built-ins can be archived, but at least one category must stay unarchived.
 The decisions are approved. The *mechanisms* stay proposed until phase 5.1.
 
+Amended 2026-11-04 with two new facts, both recorded in the amendment at the end of this ADR:
+4. Plan task 0.3 **passed** on the owner's phone. Thai slugs survive iCloud and an outside edit, so
+   slugs are stored as typed and the `.toLatin` fallback is dropped.
+5. Owner decision: category colour is **palette + custom**. The curated, measured palette comes
+   first, plus an "Other…" option that opens the system colour picker and warns about poor
+   readability. This replaces "No free colour picker" in the Palette section.
+
 ## Context
 
 Feedback from the user (`docs/feedback-plan-2026-11.md`, 1a): "I want custom categories". The
@@ -40,6 +47,9 @@ Everything in this ADR is a decision. None of it is built. Where the text says w
     and `DayPlanner.clear`, moved there in task 2.0) and take `block.token?.categorySlug`, falling
     back to `deep` only when the token carries no slug.
   - Restore maps every task and template row through the enum (`Models/Backup.swift:94`, `:107`).
+    Fixed in phase 1: restore now stores `categoryRaw` verbatim (`Backup.swift:111`, `:126` as of
+    2026-11-04). Other `Backup.swift` line numbers in this section are from 2026-11-03; the file has
+    since grown (`activityDays`, issue #7).
 - `BlockToken.url` always writes `c=` (`BlockToken.swift:64`), so a block whose token had no
   category gains `c=deep` on its first rewrite. `:70` ends in a force unwrap, which CLAUDE.md forbids.
 - `TaskItem.categoryRaw` and `TemplateRow.categoryRaw` are already plain `String`s
@@ -121,6 +131,9 @@ looked up, and a lookup that fails still renders something honest.
 - **Thai keeps its marks.** `งานบ้าน` mints `u-งานบ้าน`. Folding or dropping marks would make
   `ข้าว` (rice) and `ขาว` (white) the same slug. One visible side effect of NFKC: SARA AM (U+0E33)
   decomposes to U+0E4D U+0E32. It renders the same and is deterministic, which is what matters.
+  **Verified 2026-11-04** (plan task 0.3, ADR 002's last addendum): a percent-encoded Thai slug with
+  vowel and tone marks and a space survived an iCloud sync and an edit on another client. Slugs are
+  stored as typed. There is no transliteration step.
 - The body is capped at **32 grapheme clusters**, counted by cluster so a Thai mark is never cut off
   its base consonant.
 - A name with no letters or numbers (emoji only, say) mints `u-` plus 6 random characters from
@@ -180,8 +193,10 @@ and the user decides which stand-ins become real categories.
 
 ### Palette
 
-A fixed, measured `CategoryPalette` of about 10 to 12 light/dark pairs. **No free colour picker.**
-Every swatch must meet the fill-contrast floor in both modes (design review M10), and the built-in
+A fixed, measured `CategoryPalette` of about 10 to 12 light/dark pairs. ~~No free colour picker.~~
+**Amended 2026-11-04:** the palette comes first, and an "Other…" option allows one custom colour per
+category. See "Amendment: palette + custom colour" at the end; the rules below still hold for every
+palette swatch. Every swatch must meet the fill-contrast floor in both modes (design review M10), and the built-in
 swatches must be pairwise distinguishable above a ΔE floor (M9); both are tests. The six current
 built-in tints (`BlockCategory.swift:68-77`) are the first candidates for six of the slots, so
 nothing on screen changes unless the designer's measurements say it must. A stored `paletteIndex`
@@ -198,6 +213,7 @@ struct CategoryDefinitionValue: Hashable, Sendable {
     var emoji: String
     var symbolName: String
     var paletteIndex: Int
+    var customColorHex: String?    // amended 2026-11-04; a valid "#RRGGBB" wins over paletteIndex
     var sortIndex: Int
     var archivedAt: Date?
 }
@@ -207,7 +223,8 @@ struct ResolvedCategory: Hashable, Sendable {
     let name: String
     let emoji: String
     let symbolName: String
-    let paletteIndex: Int
+    let colorChoice: ColorChoice     // amended 2026-11-04: .palette(index) or .custom(hex)
+    let colors: CategoryColors       // light and dark records, already derived
     let isArchived: Bool
     let origin: Origin         // .builtIn, .custom, .standIn
 }
@@ -238,6 +255,7 @@ struct BlockToken {
     @Attribute(.unique) var slug: String
     var name, emoji, symbolName: String
     var paletteIndex, sortIndex: Int
+    var customColorHex: String?    // amended 2026-11-04; ships in the model's first version
     var archivedAt: Date?
 }
 ```
@@ -279,8 +297,10 @@ normal to have an old build on the phone and a new file in iCloud Drive, or the 
   is only ever used for membership (`CalendarService.swift:184-186`), so an ID that matches no
   calendar on this device hides nothing.
 - **Slugs are restored verbatim.** Tasks and template rows keep unknown and archived slugs exactly;
-  the collapse at `Backup.swift:94` and `:107` goes. A task whose slug has no definition renders as
-  a stand-in, like a block.
+  the collapse that was at `Backup.swift:94` and `:107` went in phase 1. A task whose slug has no
+  definition renders as a stand-in, like a block.
+- **Category colour** rides in `Category.customColorHex: String?`, optional. See the amendment at
+  the end for its shape, its validation and why it is kept verbatim.
 - **Categories merge by slug; restore never deletes a definition.** This is the one deliberate
   exception to "replace rather than merge" (`Backup.swift:80-84`). A definition is referenced by
   calendar events that are not in the backup, so deleting one would damage data the file cannot put
@@ -296,21 +316,23 @@ fields. That is not the whole cost: today's build also collapses every custom sl
 template rows to `deep` while restoring (`Backup.swift:94`, `:107`). The plan says an old build loses
 "only the new fields", and that is wrong for the build on the phone today. The mitigation is to ship
 the verbatim restore in phase 1 with the token fix, well before any build can mint a custom slug,
-so that by the time v2 files exist the installed build no longer collapses them.
+so that by the time v2 files exist the installed build no longer collapses them. **Shipped in phase
+1** (`Backup.swift:111`, `:126`), so the mitigation is in place before any custom slug exists.
 
-### If Thai slugs do not survive iCloud
+### Thai slugs survive iCloud (resolved 2026-11-04)
 
-Decided now so it is not argued under pressure. If the owner's experiment (plan task 0.3, below)
-shows a percent-encoded Thai `c=` value mangled by Calendar.app or iCloud CalDAV, custom slugs are
-minted from `name.applyingTransform(.toLatin, reverse: false)` followed by `.stripDiacritics`, then
-the same rules. The diacritic strip matters: `.toLatin` alone produces combining macrons, which are
-not ASCII and would hit the same mangling. Only minting changes; parsing stays verbatim.
+This section used to hold a pre-decided fallback (mint custom slugs through
+`applyingTransform(.toLatin)` plus `.stripDiacritics`) in case plan task 0.3 showed Thai `c=` values
+mangled by Calendar.app or iCloud CalDAV. The owner ran 0.3 on 2026-11-04 with the debug probe
+(`Calendar/TokenProbe.swift`) and it **passed**: the token id, a percent-encoded Thai slug with marks
+and a space, and the `t=` link all parsed back unchanged after an iCloud sync and an edit made on
+another client (ADR 002, addendum of 2026-11-04). **The fallback is dropped.** Slugs are minted as
+typed by the rules above, and the mark-preservation rules are live code, not dead code.
 
-What it costs: a recovered stand-in name reads as romanised Thai (`u-ngan-ban`, not `งานบ้าน`);
-distinct Thai names can transliterate to the same text, which the `-2` suffix handles but which makes
-recovered names more ambiguous; and the mark-preservation work above becomes dead code for slugs
-(it still matters for titles, ADR 006). If the experiment instead shows the *whole* token does not
-survive, that is ADR 002's escape hatch (the `notes` trailer), not this one.
+What 0.3 did not record: whether the url stayed byte-identical and whether `eventIdentifier`
+changed. Neither matters here, because identity and category ride on the *parsed* token. If a later
+iOS or iCloud change ever starts mangling the token, that is ADR 002's escape hatch (the `notes`
+trailer), not a change to slug minting, because slugs already in calendars cannot be re-minted.
 
 ## Consequences
 
@@ -351,14 +373,16 @@ noting for whoever revisits it: the one job ADR 002 gave `BlockMeta`, the link b
 already rides in the token as `t=` (`BlockToken.swift:8`, `:56`).
 
 **Not verified**
-- **Gap 7.** ADR 002's iCloud token-survival experiment has never been run, and this ADR widens it:
-  a percent-encoded Thai slug is a harder case than `c=deep`. It needs a real phone and iCloud, so it
-  is the owner's task 0.3 and it **gates phase 3**. Until it runs, the fallback above is a plan, not
-  a measurement.
+- ~~Gap 7.~~ **Closed 2026-11-04.** Task 0.3 passed on the owner's phone (ADR 002 addendum), so it
+  no longer gates phase 3. Verified once, on one phone and one outside client; a regression from a
+  future iOS or iCloud change would show up as stand-ins, not as data loss.
 - That adding `CategoryDefinition` to the container migrates an existing store with no data loss.
   Adding a model should be a lightweight change, but it is checked the way ADR 003 checked
   reinstalls: install over a populated simulator build and query the store.
 - The palette. No swatch has been measured yet.
+- The custom-colour derivation. Its lightness and chroma targets come from the measured palette, so
+  they cannot be set until Story 2 (#12) lands, and how a derived colour looks next to the curated
+  ones is a judgement for a device screenshot, not a test.
 - Old-build behaviour on a v2 file is reasoned from the code above, not observed.
 
 **Escape hatch**
@@ -378,15 +402,203 @@ Matches phase 1 and phase 3 of `docs/feedback-plan-2026-11.md`. Test names are i
    seeded simulator block.
 3. `backend-engineer`: restore stores task and row slugs verbatim (the old-build mitigation). Ships
    with 1 and 2.
-4. Owner: plan task 0.3 on a real phone. Gates step 5 onward.
+4. Owner: plan task 0.3 on a real phone. **Done 2026-11-04, passed.** Step 5 may start.
 5. `backend-engineer`: `CategorySlug`, `CategoryCatalog`, `CategoryPalette` tests (A.4), then
-   `Catalog/`. The designer supplies measured swatches.
-6. `database-engineer`: `CategoryDefinition`, registered in the container, plus slug accessors on
-   `categoryRaw`. Run the install-over migration check.
+   `Catalog/`. The designer supplies measured swatches (Story 2, #12). Then the colour math and
+   custom-colour derivation tests (A.4b), then `CategoryColorMath` and `CustomCategoryColor`.
+6. `database-engineer`: `CategoryDefinition`, registered in the container, with `customColorHex`
+   in its first version, plus slug accessors on `categoryRaw`. Run the install-over migration check.
 7. `backend-engineer`: `Block` and `CalendarService` take and return slugs.
 8. `frontend-engineer`: catalog in the environment, the three pickers, glyph and tint sites,
-   `Add as category`, then the category editor.
-9. `backend-engineer`: Backup v2 tests (A.5) with checked-in v1 and v2 fixtures, then the
-   implementation.
+   `Add as category`, then the category editor, then its "Other…" colour row (plan task 3.8b).
+9. `backend-engineer`: Backup v2 tests (A.5) with checked-in v1 and v2 fixtures, including a v2
+   fixture without `customColorHex`, then the implementation.
 10. `qa-engineer` and `architect`: phase 5.1. Grep every mechanism above before this ADR is marked
     accepted.
+
+## Amendment: 2026-11-04, palette + custom colour (owner decision)
+
+**Decision (owner, 2026-11-04).** Category colour is "palette + custom". The curated, measured
+`CategoryPalette` is the first thing the editor offers. After the swatches comes **Other…**, which
+opens the system `ColorPicker` and warns when the result will be hard to read or hard to tell apart.
+This reverses "No free colour picker" in the Palette section. Everything else in that section
+(measured swatches, both-mode floors, modulo wrap, emoji required) still holds for the palette.
+
+Checked against the source on 2026-11-04 before writing: there is no `CategoryStyle`,
+`CategoryPalette`, `CategoryDefinition`, `paletteIndex`, `ColorPicker`, contrast or ΔE code anywhere
+in `Blockey/`. Colours today are six hard-coded RGB pairs (`BlockCategory.swift:68-77`), and chips
+derive fill and border from them with alpha (`TimelineCanvas.swift:393-394`). Every mechanism
+below is new.
+
+### What is stored, and what wins
+
+- `CategoryDefinition` (and `CategoryDefinitionValue`) gain **`customColorHex: String?`**, next to
+  `paletteIndex`, which stays non-optional. The model does not exist yet, so the field ships in its
+  first version and there is no schema change to plan for.
+- Format: `#RRGGBB`, sRGB, 8 bits per channel, no alpha. The writer always emits uppercase. The
+  parser (`SRGB(hex:)`) accepts exactly `#` plus six hex digits, either case, and nothing else:
+  no 3-digit or 8-digit forms, no missing `#`, no whitespace.
+- **What wins:** a `customColorHex` that parses wins. Anything else (nil, empty, unparseable) falls
+  back to `paletteIndex`, wrapped modulo the palette count as before. Resolution never fails.
+- **Writes:** choosing a palette swatch sets `paletteIndex` and **clears** `customColorHex`.
+  Choosing Other… sets `customColorHex` and leaves `paletteIndex` alone, so a bad hex later still
+  lands on the swatch the category had before. Picking Other… on an untouched built-in creates its
+  override row as usual. Reset to default (deleting the row) drops both.
+- Only the one picked colour is stored, never the derived values. Derivation is a pure function, so
+  improving it later recolours every custom category consistently, and there is nothing derived to
+  go stale in a backup.
+- Identifiers use `Color` (American) to match SwiftUI's `Color` and `ColorPicker`; prose stays
+  British.
+
+### Deriving light, dark, fill, border and onFill from one colour
+
+One colour cannot serve both modes. A tint that reads on white sits at about 1.2:1 on black, which
+is the M10 failure this codebase already fixed once by hand (`BlockCategory.swift:65-67`). So the
+picked colour contributes **hue and chroma**; **lightness comes from the palette**.
+
+Pure code in `Catalog/` (Foundation only, same rules as `Scheduling/`):
+
+```swift
+struct SRGB: Hashable, Sendable { var r, g, b: Double }     // 0...1; init?(hex:), var hex
+struct CategoryColorRecord: Hashable, Sendable { var spine, fill, border, onFill: SRGB }
+struct CategoryColors: Hashable, Sendable { var light, dark: CategoryColorRecord }
+enum ColorChoice: Hashable, Sendable { case palette(Int), custom(String) }  // canonical hex
+
+enum CategoryColorMath {
+    static func contrastRatio(_ a: SRGB, _ b: SRGB) -> Double   // WCAG 2 relative luminance
+    static func deltaE76(_ a: SRGB, _ b: SRGB) -> Double        // CIELAB, D65
+    // plus OKLab/OKLCH conversion and sRGB gamut mapping, internal
+}
+
+enum CustomCategoryColor {
+    static func derive(from picked: SRGB, targets: DerivationTargets = .measured) -> CategoryColors
+    static func assess(_ colors: CategoryColors, surfaces: ColorSurfaces,
+                       others: [(slug: String, colors: CategoryColors)]) -> [ColorConcern]
+}
+```
+
+- **Derive** converts the pick to OKLCH. For each mode and each of `spine`, `fill` and `border` it
+  keeps the hue, sets lightness to that role's target, scales chroma by the role's factor and caps
+  it, then gamut-maps into sRGB by lowering chroma only (fixed-iteration bisection, so it is
+  deterministic), and clamps. `onFill` is the mode's ink (the `.primary` value), not derived.
+  OKLCH because it holds hue steady while lightness moves; CIELAB drifts blue toward purple.
+- **Targets** (`DerivationTargets.measured`) are the designer's numbers, fit to the measured
+  records from Story 2 (#12): per mode and role, a lightness, a chroma factor and a chroma cap. A
+  derived colour therefore sits at the same lightness as its curated neighbours.
+- **Greys.** A pick with OKLCH chroma under about 0.02 has no meaningful hue. It derives to greys at
+  the target lightness, and the assessment then flags it as looking like a meeting.
+- **Measured with the review's method.** Checks use WCAG 2 contrast and **CIE76 ΔE in CIELAB**,
+  because that is what `docs/design-review.md` used (M9, M10) and what the redesign targets are
+  written in. Derivation in OKLCH, measurement in CIELAB is deliberate: the thresholds stay
+  comparable with every number already in the docs.
+
+**Assessment** runs the redesign plan's section 2 floors, light and dark, against the real surfaces
+(`ColorSurfaces`: canvas and meeting fill per mode):
+
+| Concern | Check | Floor |
+|---|---|---|
+| `lowContrast` | `onFill` on `fill` | 4.5:1 |
+| `lowContrast` | `spine` and `border` on canvas | 3:1 |
+| `lowContrast` | `fill` on canvas | ΔE 8 and 1.3:1 |
+| `looksLikeMeeting` | `fill` vs meeting fill | ΔE 15, plus the designer's chroma gap |
+| `closeTo(slug)` | `fill` vs each other **active** category's `fill` | ΔE 10 |
+
+Concerns come back worst first, each naming its mode. The same function is the palette's test:
+every curated swatch must assess to `[]`, which replaces the separate fill-contrast check in A.4.
+Colour-blind simulation is not part of the warning. It stays a best-effort measurement for the
+palette (Story 2), and the required emoji carries the distinction.
+
+**Warn, do not auto-adjust (recommended and adopted).** Lightness is always derived; that is how
+one colour becomes eight, not a correction. Beyond that the app **only warns**. It never nudges hue
+or chroma away from a neighbour, and Save is always allowed:
+- a nudge away from one category can land on another, and two custom categories could each push
+  the other, so the result would depend on edit order;
+- it would override an explicit choice in a single-user app whose owner asked for a warning;
+- the emoji is required, so a colour clash is a legibility cost, not a data problem.
+
+The editor shows a live preview chip in **both modes** under the picker, because the derived spine
+will not be exactly the picked colour, and one line of copy for the worst concern ("Looks like a
+meeting in dark mode", "Close to Admin", "Title may be hard to read"; the designer owns the words).
+Honest expectation: because lightness is fixed to measured targets, `lowContrast` should almost
+never fire. The concerns users will actually see are `looksLikeMeeting` and `closeTo`. A hue-sweep
+test pins that.
+
+### Too close to the meeting style or another category
+
+"Meeting style" means the **fixed-event chip** (`FixedEventChip`, `TimelineCanvas.swift:438`), not
+the built-in `meeting` category, which is an ordinary block category with a hue.
+- Against meetings: `looksLikeMeeting` when the derived fill in either mode is under ΔE 15 from the
+  meeting fill or below the chroma gap. Today the meeting fill is `Color.primary` at 5 to 6 percent
+  alpha (`TimelineCanvas.swift:462`), so until Story 1 and Story 3 make it opaque, the surfaces value
+  is that alpha composited over the canvas colour.
+- Against categories: `closeTo(slug)` for each **unarchived** category other than the one being
+  edited, palette-coloured or custom, under ΔE 10 in either mode. Archived categories are skipped:
+  they are not offered, so warning about them is noise.
+- Both are **edit-time only**. Nothing is stored, nothing re-warns later when another category
+  changes, and nothing blocks Save.
+
+### Backup v2
+
+- `BlockeyBackup.Category` carries `slug`, `name`, `emoji`, `symbolName`, `paletteIndex`,
+  `sortIndex`, `archivedAt: Date?` and **`customColorHex: String?`**.
+- `customColorHex` is optional so that v1 files (no `categories` at all) and any v2 file written
+  before the field existed both decode. It should ship in the first v2 anyway, so there is one v2
+  shape in practice.
+- **Restore canonicalises.** A valid hex is stored uppercase. Anything invalid is stored as `nil`,
+  so the category restores on its `paletteIndex`. This differs from slugs, which are kept verbatim
+  because calendar events reference them; nothing outside the app references a colour. Resolution
+  still treats an invalid stored hex as absent, as a second line of defence.
+- **`customColorHex` means `#RRGGBB` sRGB, permanently.** If a later build wants a wider gamut, it
+  adds a new field. Reinterpreting this one would make an older build misread a newer file without
+  any version bump to stop it.
+- `paletteIndex` outside the range still wraps modulo the count.
+
+### The deleted-app stand-in
+
+Unchanged in substance: an unknown slug takes its colour from **32-bit FNV-1a modulo the palette
+count**, as specified above, and never from a custom colour. It cannot know one: the colour lived
+only in SwiftData and the backup, and the token carries only the slug. So after deleting the app
+without a backup, a custom-coloured category's blocks render in their FNV swatch until the backup
+is restored or the user re-adopts them. Two additions:
+- **Add as category** creates the definition with `paletteIndex` set to the stand-in's FNV index
+  and no `customColorHex`, so adopting a stand-in never changes its colour on screen.
+- A stand-in resolves to `ColorChoice.palette(fnvIndex)`. A test pins that a stand-in never
+  produces `.custom`.
+
+### Effect on the `CategoryStyle` seam (redesign Story 2, #12)
+
+The redesign plan (section 2, "The seam with custom categories") has views read a small
+`CategoryStyle` (title, emoji, symbolName, spine, fill, border), built today from `BlockCategory`
+and later from `ResolvedCategory`. Custom colours keep that seam and add constraints, so #1 phase 3
+and #12 do not collide:
+1. **Colours are numbers in `Catalog/`, not asset-catalog names.** The derivation and the warning
+   need sRGB values, and a custom colour cannot be an asset-catalog entry. Story 2 records its six
+   records as `CategoryColors` values in a Foundation-only `Catalog/` file, and Story 1 exposes the
+   canvas and meeting fill as numeric `SRGB` pairs beside the `UIColor` it builds from them.
+2. **Story 2 owns the value types, #1 owns the palette.** Story 2 creates `SRGB`,
+   `CategoryColorRecord`, `CategoryColors` and the six built-in records. #1 task 3.4 wraps them in
+   `CategoryPalette` (slots 7 to 12, FNV lookup). That keeps Story 1's "do not create
+   `CategoryPalette` here".
+3. **`CategoryColorMath` is built once, by whichever lands first.** With the recommended order
+   (redesign Q9) that is Story 2's qa task ("tests that every record meets the floors"), which needs
+   contrast and ΔE76 anyway. #1 task 3.3b then adds only OKLCH, gamut mapping, `derive` and
+   `assess`. The designer's measurement script and the app must use the same formulas.
+4. **`CategoryStyle` is a plain struct with stored colours**, plus `onFill`, built by one adapter
+   from any `CategoryColors`: `CategoryStyle(BlockCategory)` until task 3.7,
+   `CategoryStyle(ResolvedCategory)` after. It must not be keyed by an enum or switch over
+   built-ins, or custom colours have nowhere to go. Under that rule, task 3.7 is still a swap of the
+   producer, as the redesign plan intends.
+5. `ResolvedCategory` replaces `paletteIndex` with `colorChoice` and `colors` (contract above), so
+   no view ever looks up the palette itself.
+
+### Consequences of this amendment
+
+- **Easy:** a category past the palette size can get its own colour; built-ins can be recoloured
+  freely; the palette tests and the editor warning are one function.
+- **Hard:** the editor gains a picker, a two-mode preview and warning copy (task 3.8b). Derivation
+  targets depend on Story 2's measurements, so 3.3b cannot finish before Story 2.
+- **Cannot undo:** `customColorHex` as `#RRGGBB` sRGB is part of the backup format from the first v2
+  file.
+- **Escape hatch:** if custom colours prove a mistake, `CategoryCatalog.resolve` ignores
+  `customColorHex` (one line) and every category falls back to its `paletteIndex`. The stored values
+  stay, so the decision can be reversed again without data loss.

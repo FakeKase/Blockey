@@ -217,8 +217,13 @@ Details of A:
   deterministically, and the emoji keeps them apart.
 - **Recovering a name from a slug is best effort.** Lowercasing, collapsed punctuation and `-2`
   suffixes are lost, so the definition is always the real source.
-- **Colour:** a fixed, measured `CategoryPalette` of about 10 to 12 light/dark pairs, no free picker
-  (design review M9, M10). Emoji is required, so colour is never the only signal.
+- **Colour:** a fixed, measured `CategoryPalette` of about 10 to 12 light/dark pairs (design review
+  M9, M10), offered first. **Amended 2026-11-04 (owner):** plus an "Other…" option that opens the
+  system colour picker. The pick is stored as `customColorHex` (`#RRGGBB`) beside `paletteIndex`;
+  hue and chroma come from the pick, lightness from the palette, and the editor warns (never
+  blocks, never nudges) when it looks like a meeting or is close to another category. Full design
+  in ADR 005, "Amendment: palette + custom colour". Emoji is required, so colour is never the only
+  signal.
 - **Token fix first:** `BlockToken` keeps `categorySlug: String?` verbatim (NFC) and round-trips
   any unknown query items. This alone stops the silent overwrite in 2.1 and is worth shipping first.
   The force unwrap at `BlockToken.swift:70` goes too.
@@ -297,10 +302,9 @@ task are in Appendix A.
   from the calendar", both marked **Proposed** until 5.1 checks them against the code. Architect.
   **S**
 - 0.3 **Owner, on a real phone with iCloud:** run ADR 002's token-survival experiment (gap 7),
-  adding a percent-encoded Thai `c=` slug. This **gates phase 3**. If Thai slugs don't survive,
-  use the decision already made in advance: transliterate custom slugs with
-  `applyingTransform(.toLatin)`, and accept that a recovered stand-in name reads as romanised
-  Thai. **S**
+  adding a percent-encoded Thai `c=` slug. This **gates phase 3**. **Done 2026-11-04: passed**
+  (ADR 002, last addendum). Thai slugs survive iCloud and an outside edit, so slugs are stored as
+  typed and the pre-decided `.toLatin` fallback is dropped. Phase 3 is unblocked. **S**
 
 **Phase 1, stop losing slugs (ships alone)**
 - 1.1 Tests: token round-trips (A.1). **S**
@@ -330,21 +334,38 @@ task are in Appendix A.
 - 2.8 Designer reviews `scripts/demo.sh` screenshots (simulator only; emoji show as tofu there,
   which is expected). **S**
 
-**Phase 3, custom categories (after 0.3)**
+**Phase 3, custom categories (0.3 passed 2026-11-04, unblocked)**
+
+Colour work depends on redesign Story 2 (#12), which owns the six measured records and the
+`SRGB` / `CategoryColors` value types (ADR 005 amendment, "Effect on the `CategoryStyle` seam").
 - 3.1 Tests: `CategorySlug` (A.4). **S**
 - 3.2 Tests: `CategoryCatalog` over a plain `CategoryDefinitionValue` struct, so tests never
-  build `@Model` objects (A.4). **S**
+  build `@Model` objects (A.4). Includes custom hex winning over `paletteIndex`. **S**
 - 3.3 Tests: `CategoryPalette`. The designer supplies measured light/dark pairs (A.4). **M**
+- 3.3b Tests: custom colour (A.4b). Hex parsing, OKLCH round trip and gamut mapping, `derive`
+  (deterministic, hue-sweep meets every floor, curated spines land near their records) and
+  `assess` (meeting, neighbour, both modes, self and archived skipped). Contrast and ΔE76
+  reference values too, unless Story 2's qa task already wrote them. The designer supplies
+  `DerivationTargets` fit to Story 2's records and the meeting chroma gap. backend-engineer and
+  designer. **M** (added 2026-11-04)
 - 3.4 Implement `Catalog/` until the tests pass. **M**
-- 3.5 `CategoryDefinition` model with a unique `slug`, registered in the container. Slug
-  accessors on the existing `categoryRaw`, which is not renamed, so no migration.
-  database-engineer. **S**
+- 3.4b Implement `CustomCategoryColor` (and `CategoryColorMath` if Story 2 has not) until 3.3b
+  passes. backend-engineer. **M** (added 2026-11-04)
+- 3.5 `CategoryDefinition` model with a unique `slug`, registered in the container, with
+  `customColorHex: String?` in its first version. Slug accessors on the existing `categoryRaw`,
+  which is not renamed, so no migration. database-engineer. **S**
 - 3.6 `Block` and `CalendarService` take and return slugs. **M**
 - 3.7 Catalog in the environment. Replace the three `allCases` pickers and the glyph/tint sites.
   Add `Add as category` on unknown slugs. **L**
 - 3.8 Category editor in Settings (add, edit, reorder, archive with a move-to prompt), plus a
   Category chip in the composer that opens the full list. **M**
-- 3.9 Backup v2 tests first (A.5), then implement. Checked-in v1 and v2 fixtures. **L**
+- 3.8b "Other…" colour row in the editor: `ColorPicker` with `supportsOpacity: false`, conversion
+  of the picked `Color` to sRGB with components clamped to 0...1 (a Display P3 pick can fall
+  outside), a preview chip in light and dark side by side, and one line for the worst concern.
+  Choosing a swatch clears the custom hex. frontend-engineer, designer for copy. **M** (added
+  2026-11-04)
+- 3.9 Backup v2 tests first (A.5), then implement. Checked-in v1 and v2 fixtures, plus a v2 fixture
+  without `customColorHex`. **L**
 
 **Phase 4, title suggestions**
 - 4.1 Tests: `TitleKey` (A.6). **S**
@@ -362,7 +383,9 @@ task are in Appendix A.
   the ADRs name against the source before marking them Accepted. Update the CLAUDE.md known
   gaps: close gap 6 only once restoring settings is verified. **S**
 
-Rough total: **8 to 12 working days**. Phase 1 takes about half a day and is the most urgent.
+Rough total: **8 to 12 working days** as first planned; the custom-colour tasks (3.3b, 3.4b, 3.8b,
+three **M**) add about 1.5 days, so **9.5 to 13.5** from 2026-11-04. Phase 1 takes about half a day
+and is the most urgent.
 
 ---
 
@@ -373,7 +396,8 @@ Rough total: **8 to 12 working days**. Phase 1 takes about half a day and is the
 | The preview goes stale and confirm writes over a meeting that arrived since | Recompute on confirm, ask again if the plan changed (P1 tests) |
 | Undo duplicates tasks or leaves a half-done state, worst on Start over | Undo record keyed by token UUID, plus inbox tasks the clear created; done in one operation; tested against a fake writer |
 | A token stripped in Calendar.app breaks Undo, suggestions and colour | Undo reports partial results; history still counts the title; the block keeps working (ADR 002) |
-| Thai slugs mangled by iCloud CalDAV | Experiment 0.3 gates phase 3; Latin transliteration is the pre-decided fallback |
+| Thai slugs mangled by iCloud CalDAV | **Retired 2026-11-04**: experiment 0.3 passed, slugs stored as typed |
+| A custom colour that reads like a meeting or another category | Lightness derived from the palette; edit-time warning against meeting fill and active categories; emoji required |
 | App deleted without a backup loses category names and colours | Slug-derived stand-in with stable FNV-1a colour, one-tap adopt, Backup v2 |
 | A backup from a newer version opened by an older build | Version gate refuses newer files; older builds ignore unknown keys |
 | A half-finished restore | Validate before the first delete; the existing rollback on save |
@@ -395,7 +419,8 @@ Known gaps from CLAUDE.md:
 - **Gap 5** (no debounce): not made worse. The preview reuses Today's refresh path, and
   suggestions fetch once per inbox open.
 - **Gap 6** (backup omits settings): **closed** by Backup v2, once verified in 5.1.
-- **Gap 7** (token-survival experiment): widened by Thai slugs, and now a gating task (0.3).
+- **Gap 7** (token-survival experiment): widened by Thai slugs, made a gating task (0.3), and
+  **closed 2026-11-04** when 0.3 passed on the owner's phone.
 - **Gap 8** (`BlockMeta`): still not built, and nothing here needs it. ADR 005 should say so.
 
 ---
@@ -404,13 +429,15 @@ Known gaps from CLAUDE.md:
 
 - **That the feedback means "I didn't know what `Stamp “Workday”` does".** The owner chose this
   reading. It hasn't been confirmed with the person who gave the feedback.
-- **Whether a percent-encoded Thai `blockey://` url survives Calendar.app and iCloud.** Needs a
-  real phone and iCloud (task 0.3).
+- ~~Whether a percent-encoded Thai `blockey://` url survives Calendar.app and iCloud.~~ Verified
+  2026-11-04 by task 0.3 (passed). Not recorded: whether the url stayed byte-identical.
 - **How fast a 90-day Blockey-calendar fetch is on the phone.** It can only be measured on the
   device.
 - **SwiftUI `TextField` with Thai marked text.** It doesn't expose `markedTextRange`, so the
   debounce approach is untested and may need a wrapper (task 4.6).
 - **Palette contrast and ΔE values.** Not designed yet.
+- **How a derived custom colour looks beside the curated ones.** Tests pin the floors, not taste;
+  it needs a device screenshot (simulator colours are fine, only emoji are not).
 - **QA did not run the suite.** The 146-test baseline is from the lead's run on 2026-11-03.
 
 Verified against the source in this pass:
@@ -448,6 +475,11 @@ Doc claims found false again:
 - **Q3, categories:** add new ones, and let the user edit the six built-ins (name, emoji, colour).
   Deleting a category archives it.
 - **Q4, the extra tap:** acceptable, with a `Skip preview` setting (off by default).
+
+Added 2026-11-04 (owner):
+- **Task 0.3 passed.** Thai slugs are stored as typed; the `.toLatin` fallback is dropped.
+- **Q5, category colour:** "palette + custom". The curated palette first, plus "Other…" opening the
+  system colour picker, with a warning about poor readability. Design in ADR 005's amendment.
 
 ---
 
@@ -539,8 +571,38 @@ offsets.
 - CategoryPalette:
   - unknownSlugIndexMatchesHardCodedValue (catches per-process `hashValue`)
   - paletteWrapsDeterministicallyPastCount
-  - everySwatchMeetsFillContrastInBothModes (M10)
+  - everySwatchMeetsFillContrastInBothModes (M10; implemented as `assess(swatch) == []`)
   - builtInSwatchesPairwiseDeltaEAboveFloor (M9)
+- CategoryCatalog, colour (3.2):
+  - validCustomHexWinsOverPaletteIndex
+  - invalidCustomHexFallsBackToPaletteIndex
+  - choosingPaletteSwatchClearsCustomHex
+  - standInNeverResolvesToCustomColor
+  - addAsCategoryKeepsStandInPaletteIndex
+
+**A.4b Custom colour (3.3b)**
+- SRGB hex:
+  - hexParsesUppercaseAndLowercase
+  - hexRejectsShortLongAlphaMissingHashWhitespaceAndJunk
+  - hexWriterEmitsCanonicalUppercase
+  - hexRoundTripsThroughEightBitSRGB
+- CategoryColorMath (skip any Story 2 already wrote):
+  - contrastRatioMatchesWcagReferencePairs (black on white is 21:1)
+  - deltaE76MatchesPinnedReferenceValue
+  - oklchRoundTripsInGamutColors
+  - gamutMappingKeepsLightnessAndHue
+- CustomCategoryColor.derive:
+  - deriveIsDeterministic
+  - derivedRecordsMeetContrastFloorsAcrossHueSweep (every 15 degrees, high chroma, both modes)
+  - deriveFromCuratedSpineLandsNearCuratedRecord (threshold set by the designer)
+  - greyPickDerivesToGreysWithoutCrashing
+  - outOfGamutPickIsMappedNotClipped
+- CustomCategoryColor.assess:
+  - greyPickWarnsLooksLikeMeeting
+  - pickNearActiveCategoryWarnsWithItsSlug
+  - assessSkipsSelfAndArchivedCategories
+  - assessReportsEachModeSeparately
+  - concernsAreOrderedWorstFirst
 
 **A.5 Backup v2 (3.9)**
 - v1FileDecodesUnderV2
@@ -556,6 +618,10 @@ offsets.
 - restoreKeepsUnknownCalendarIDsHarmlessly
 - restoreValidatesBeforeDeleting
 - restoreWarningCountsCategories
+- v2FileWithoutCustomColorHexDecodes
+- customColorHexRoundTrips
+- lowercaseCustomColorHexRestoresCanonical
+- invalidCustomColorHexRestoresAsNilOnPaletteIndex
 
 **A.6 Titles (4.1, 4.2)**
 - TitleKey:
