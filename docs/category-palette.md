@@ -432,3 +432,13 @@ Recomputed by script from the hex values above (WCAG 2 relative luminance, CIE76
 
 - Keep all 12 swatches. The owner has no colour-vision deficiency, so the deuteranopia and protanopia collapses above are noted, not acted on. The required emoji still separates categories.
 - Custom colours keep the picked hue and derive lightness per mode (the recommendation). The picker says so in one line: "Blockey adjusts brightness for light and dark mode. Your pick sets the hue."
+
+## Derivation check, 2026-11-04 (by machine)
+
+`CustomCategoryColor.derive` now exists, so the "estimate" in section 6 is replaced by a result. **`DerivationTargets.measured` is unchanged: the first fit passed.**
+
+- Hue sweep: 2,952 picks (hue every 5 degrees, OKLCH chroma 0.02 to 0.42, mixed pick lightness 0.30 to 0.84), both modes, against the assumed surfaces. No pick raised `lowContrast`. Tightest values seen: spine on canvas 3.91 (light) and 6.84 (dark); border 3.47 and 3.68; fill ratio to canvas 1.39 and 1.81; fill dE to canvas 13.99 and 21.27; onFill on fill 13.08 and 8.39. Every floor holds with room, including the light border that section 4.1 worried about (3.47 against 3.0).
+- `looksLikeMeeting` fires for pick chroma up to 0.0889 and not from 0.0893 up, matching the 0.09 predicted in section 4.2.
+- All twelve curated swatches assess to `[]` against the other eleven, and the machine minimums agree with the hand figures (section 3) to within 0.05.
+- Deriving from each curated light spine: the light spine returns within 1 degree of hue, 0.057 OKLab L and dE 7.3. Hand-authored fills and borders drift more (worst hue error 21 degrees, L 0.075, C 0.059), so "near" in the test is hue 25, L 0.09, C 0.07 for fills and borders, with the tighter bound on the light spine. Gold and Lime are the largest misses (the curated light fill of a yellow carries more chroma than 0.45 x spine chroma gives).
+- Light-mode meeting fill: exact compositing of black 5 percent over `#FAF8F5` gives `#EDECE9`; section 1 rounded the half byte up to `#EEECE9`. The code keeps the document's value; the test allows one byte.

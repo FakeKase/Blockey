@@ -71,8 +71,8 @@ enum CategorySlug {
         return hash
     }
 
-    /// The palette slot of a slug nobody knows. `paletteCount` is injected because the measured
-    /// palette is not built yet (plan task 3.3, pending #12).
+    /// The palette slot of a slug nobody knows. `paletteCount` is injected so tests can pin the
+    /// arithmetic at other sizes; callers pass `CategoryPalette.count`.
     static func standInPaletteIndex(for slug: String, paletteCount: Int) -> Int {
         guard paletteCount > 0 else { return 0 }
         // Widened before the modulo: `UInt32(paletteCount)` would trap for a count above 4 billion.

@@ -30,7 +30,7 @@ struct CategoryDefinitionValue: Hashable, Sendable {
     }
 }
 
-/// The colour a category resolved to, before light/dark derivation (3.3 and 3.3b, pending #12).
+/// Which colour a category resolved to, before light/dark derivation.
 enum ColorChoice: Hashable, Sendable {
     case palette(Int)
     /// Canonical uppercase `#RRGGBB`.
@@ -47,11 +47,12 @@ struct ResolvedCategory: Hashable, Sendable {
     let emoji: String
     let symbolName: String
     let colorChoice: ColorChoice
+    /// Light and dark records, already derived for a custom colour (ADR 005 contract). Views read
+    /// this and never look up the palette themselves.
+    let colors: CategoryColors
     /// Archived means "not offered", never "not rendered".
     let isArchived: Bool
     let origin: Origin
-    // `colors: CategoryColors` from the ADR contract is deliberately absent: CategoryPalette and
-    // the derivation are tasks 3.3 and 3.4b, waiting on the measured palette (#12).
 }
 
 enum NameProblem: Hashable, Sendable {
@@ -89,17 +90,13 @@ struct CategoryCatalog: Sendable {
     static let standInEmoji = "\u{1F3F7}\u{FE0F}"
     static let standInSymbolName = "tag"
 
-    /// PLACEHOLDER pending #12 (task 3.3, the measured `CategoryPalette`). Callers that know the
-    /// real count pass it; nothing should read this once the palette exists.
-    static let pendingPaletteCount = 12
-
     private let overrides: [String: CategoryDefinitionValue]
     private let customs: [CategoryDefinitionValue]
     private let paletteCount: Int
 
     /// `definitions` may repeat a slug (a hand-edited backup, say); the first wins, matching
     /// Backup v2's first-wins rule.
-    init(definitions: [CategoryDefinitionValue], paletteCount: Int = CategoryCatalog.pendingPaletteCount) {
+    init(definitions: [CategoryDefinitionValue], paletteCount: Int = CategoryPalette.count) {
         var bySlug: [String: CategoryDefinitionValue] = [:]
         var custom: [CategoryDefinitionValue] = []
         for def in definitions where bySlug[def.slug] == nil {
@@ -120,15 +117,18 @@ struct CategoryCatalog: Sendable {
         }
         if let def = overrides[slug] {
             let isBuiltIn = Self.builtInSlugs.contains(slug)
+            let choice = colorChoice(for: def)
             return ResolvedCategory(slug: slug, name: def.name, emoji: def.emoji, symbolName: def.symbolName,
-                                    colorChoice: colorChoice(for: def), isArchived: def.archivedAt != nil,
+                                    colorChoice: choice, colors: CategoryPalette.colors(for: choice),
+                                    isArchived: def.archivedAt != nil,
                                     origin: isBuiltIn ? .builtIn : .custom)
         }
         if let index = Self.builtIns.firstIndex(where: { $0.slug == slug }) {
             let b = Self.builtIns[index]
             // Built-ins take palette slots 0...5 in order.
             return ResolvedCategory(slug: slug, name: b.name, emoji: b.emoji, symbolName: b.symbolName,
-                                    colorChoice: .palette(index % paletteCount), isArchived: false,
+                                    colorChoice: .palette(index % paletteCount),
+                                    colors: CategoryPalette.colors(at: index % paletteCount), isArchived: false,
                                     origin: .builtIn)
         }
         return standIn(for: slug)
@@ -221,9 +221,10 @@ struct CategoryCatalog: Sendable {
     /// Never produces `.custom`: the colour lived only in SwiftData and the backup, and the token
     /// carries just the slug, so a stand-in cannot know it.
     private func standIn(for slug: String) -> ResolvedCategory {
-        ResolvedCategory(slug: slug, name: CategorySlug.displayName(fromSlug: slug),
+        let index = CategorySlug.standInPaletteIndex(for: slug, paletteCount: paletteCount)
+        return ResolvedCategory(slug: slug, name: CategorySlug.displayName(fromSlug: slug),
                          emoji: Self.standInEmoji, symbolName: Self.standInSymbolName,
-                         colorChoice: .palette(CategorySlug.standInPaletteIndex(for: slug, paletteCount: paletteCount)),
+                         colorChoice: .palette(index), colors: CategoryPalette.colors(at: index),
                          isArchived: false, origin: .standIn)
     }
 }
