@@ -242,13 +242,15 @@ button in the editor (3.7).
    already on the calendar are not counted and not asked about: they keep the slug and keep rendering.
 3. **N + M == 0:** archive immediately. No dialog. The row moves into `Archived`; VoiceOver announces
    `Archived “Errands”`. This is cheap to reverse (Restore), so asking would be friction.
-4. **N + M > 0:** present the **move-to sheet**, `.medium` detent, interactive dismissal allowed
+4. **N + M > 0:** present the **move-to sheet**, `.large` detent only (amended 2026-11-04: at `.medium` the
+   pinned buttons and the usage text left no room to see the categories), interactive dismissal allowed
    (dismissing is the same as Cancel).
 
 **Move-to sheet layout**
 
 ```
-Cancel              Archive “Errands”?
+Cancel              Archive category        <- short nav title, so a long or Thai name never truncates
+Archive “Errands”?                          <- the full question, wrapping .headline, first in the list
 3 inbox tasks and 2 template rows use this category.
 Blocks already on your calendar keep this category.
 
@@ -258,9 +260,10 @@ MOVE THEM TO
  ...                       (every other unarchived category, radio rows, none preselected)
 Choose a category to move them to, or archive without moving.
 
+(pinned bar, buttons only:)
 [        Move 5 and archive        ]   prominent, disabled until a row is chosen
 [      Archive without moving      ]   plain
-They keep “Errands” and still show it. It just won’t be offered for new work.
+(the note “They keep “Errands” and still show it…” scrolls in the list footer, under the helper line)
 ```
 
 - The archived category itself is not in the list. Rows are radio-style (`checkmark` on the choice,
@@ -274,7 +277,8 @@ They keep “Errands” and still show it. It just won’t be offered for new wo
 - **Failure** (the save throws): the sheet stays open, nothing is changed, and an inline warning
   appears above the buttons: `Couldn’t archive “Errands”. Nothing was changed. Try again.` For the
   no-prompt path (step 3) the failure is an alert: title `Couldn’t archive`, message
-  `Nothing was changed. Try again.`, button `OK`.
+  `Nothing was changed. Try again.`, button `OK`. The Categories list reuses the same alert shape for its
+  other failures, each with its own title: `Couldn’t reorder` and `Couldn’t restore`, same message.
 - Usage sentence, by count (pure function, tested):
   - N and M both above zero: `3 inbox tasks and 2 template rows use this category.`
   - Only tasks: `3 inbox tasks use this category.` One: `1 inbox task uses this category.`
@@ -323,7 +327,7 @@ Form sections, in order: **Name**, **Emoji**, **Colour**, then actions (Reset, A
 ### 3.1 Name
 
 - `TextField`, placeholder `Category name`, accessibility label `Name`. Capitalisation
-  `.words`, return key `.next` (moves to nothing; dismisses the keyboard), no autocorrection changes.
+  `.words`, return key `.done` (amended 2026-11-04: there is no next field, so `.done`; it dismisses the keyboard), no autocorrection changes.
   Thai and other keyboards are untouched: the field never filters characters.
 - **Cap: 24 characters**, counted as `Character` (grapheme cluster), so a Thai mark is never cut off
   its consonant. Past the cap, input beyond it is dropped, the same way `ComposerTitle` does it.
@@ -687,6 +691,8 @@ Grouped by place. Curly quotes and apostrophes throughout. `{x}` marks a runtime
 | Cancel | `Cancel` |
 | Inline failure | `Couldn’t archive “{name}”. Nothing was changed. Try again.` |
 | Alert (no-prompt path) | title `Couldn’t archive`, message `Nothing was changed. Try again.`, button `OK` |
+| Alert (failed reorder) | title `Couldn’t reorder`, message `Nothing was changed. Try again.`, button `OK` |
+| Alert (failed restore) | title `Couldn’t restore`, message `Nothing was changed. Try again.`, button `OK` |
 
 **Editor**
 

@@ -39,18 +39,32 @@ struct AdoptCategoryButton: View {
     @Environment(\.categoryCatalog) private var catalog
     @Environment(\.modelContext) private var context
 
+    @State private var editor: CategoryEditorRequest?
+
     var body: some View {
-        // TODO(3.8): when the plan is `.needsRename` (the recovered name collides with an
-        // unarchived category) spec 4.2 opens the category editor in Adopt mode with the
-        // duplicate message showing. The editor does not exist until 3.8, so until then the
-        // button is not offered for a collision rather than creating two identical names.
-        if case .add(let value) = catalog.planAdoption(of: slug) {
-            Button { adopt(value) } label: {
+        // `.needsRename`: the recovered name collides with an unarchived category, so a one-tap add
+        // would create two identical names. The button then opens the editor in Adopt mode with
+        // the duplicate message already showing, and the slug fixed to the stand-in's (spec 4.2).
+        let plan = catalog.planAdoption(of: slug)
+        if plan != .notAStandIn {
+            Button {
+                switch plan {
+                case .add(let value): adopt(value)
+                case .needsRename: editor = CategoryEditorRequest(mode: .adopt(slug: slug))
+                case .notAStandIn: break
+                }
+            } label: {
                 Label("Add as category", systemImage: "plus.circle")
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .accessibilityHint("Adds it with this name. Every block that uses it updates. Nothing in your calendar changes.")
+            .sheet(item: $editor) { request in
+                CategoryEditorSheet(mode: request.mode, catalog: catalog) { saved in
+                    outcome = .added(name: saved.name)
+                    AccessibilityNotification.Announcement("Added as category").post()
+                }
+            }
         }
     }
 
@@ -84,13 +98,16 @@ struct CategoryChoiceList: View {
     /// True in the composer's sheet, which needs its own way out.
     var showsCancel = false
     @Binding var outcome: AdoptionOutcome?
-    /// TODO(3.8): the `New category…` row (spec 1.5). Left nil, the row is not shown, because the
-    /// editor it opens does not exist yet. 3.8 passes a closure that presents the editor and
-    /// selects the saved slug.
-    var onNewCategory: (() -> Void)?
+    /// The `New category…` row (spec 1.5) opens the editor in a sheet; on Save the list selects
+    /// the new slug and pops. Off only for a caller that must not create categories.
+    var offersNewCategory = true
 
     @Environment(\.categoryCatalog) private var catalog
     @Environment(\.dismiss) private var dismiss
+    @State private var editor: CategoryEditorRequest?
+    /// Set when the editor saves, acted on once its sheet has gone, so the list never pops while
+    /// a sheet is still leaving it.
+    @State private var created: SavedCategory?
 
     var body: some View {
         let layout = CategoryChoiceLayout(catalog: catalog, current: current)
@@ -105,8 +122,8 @@ struct CategoryChoiceList: View {
             }
             Section {
                 ForEach(layout.rows, id: \.slug) { row($0, selected: $0.slug == layout.selectedSlug) }
-                if let onNewCategory {
-                    Button(action: onNewCategory) {
+                if offersNewCategory {
+                    Button { editor = CategoryEditorRequest(mode: .add) } label: {
                         Label("New category\u{2026}", systemImage: "plus")
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                             .contentShape(Rectangle())
@@ -118,6 +135,11 @@ struct CategoryChoiceList: View {
         }
         .navigationTitle("Category")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $editor, onDismiss: {
+            if let created { onSelect(created.slug); self.created = nil; dismiss() }
+        }) { request in
+            CategoryEditorSheet(mode: request.mode, catalog: catalog) { created = $0 }
+        }
         .toolbar {
             if showsCancel {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

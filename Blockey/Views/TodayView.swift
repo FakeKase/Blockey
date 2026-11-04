@@ -6,6 +6,7 @@ import SwiftData
 struct TodayView: View {
     @Environment(CalendarService.self) private var calendars
     @Environment(\.modelContext) private var context
+    @Environment(\.categoryCatalog) private var catalog
 
     @Query(sort: [SortDescriptor(\TaskItem.sortIndex), SortDescriptor(\TaskItem.createdAt)])
     private var tasks: [TaskItem]
@@ -742,7 +743,9 @@ struct TodayView: View {
             // Through the planner so the day is counted toward the streak (issue #7).
             let block = try planner.addBlock(title: DefaultTitles.newBlock,
                                              range: TimeRange(start: start, duration: length),
-                                             categorySlug: CategoryCatalog.fallbackSlug,
+                                             // Nobody chose a category, so not one that is archived
+                                             // ("not offered for new work", UI spec 1.2).
+                                             categorySlug: catalog.defaultSlugForNewWork,
                                              inputs: planInputs)
             reload()
             selectedBlock = block

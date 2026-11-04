@@ -63,4 +63,13 @@ enum CategoryPalette {
             return CustomCategoryColor.derive(from: picked)
         }
     }
+
+    /// The swatch a new category starts on (UI spec 3.4): the first in `pickerOrder` that no
+    /// unarchived category uses, else `pickerOrder[unarchivedCount % 12]`. Returns a palette
+    /// index, not a picker position.
+    static func defaultIndex(avoiding used: Set<Int>, unarchivedCount: Int) -> Int {
+        let normalised = Set(used.map(wrapped))
+        if let free = pickerOrder.first(where: { !normalised.contains($0) }) { return free }
+        return pickerOrder[((unarchivedCount % pickerOrder.count) + pickerOrder.count) % pickerOrder.count]
+    }
 }

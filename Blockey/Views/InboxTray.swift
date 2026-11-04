@@ -27,6 +27,7 @@ struct InboxTray: View {
     @Environment(\.categoryCatalog) private var catalog
     @State private var isChoosingCategory = false
     @State private var adoption: AdoptionOutcome?
+    @State private var newCategory: CategoryEditorRequest?
 
     @State private var draft = ComposerDraft()
     @State private var suggestionRow = ComposerSuggestionRow()
@@ -139,17 +140,7 @@ struct InboxTray: View {
 
             suggestionChips
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(draft.durations, id: \.self) { minutes in
-                        chip(label: durationLabel(minutes),
-                             selected: draft.minutes == minutes) { draft.select(minutes: minutes) }
-                    }
-                    Divider().frame(height: 18).padding(.horizontal, 2)
-                    categoryChips
-                }
-                .padding(.horizontal, 1)
-            }
+            durationAndCategoryRows
         }
         .sheet(isPresented: $isChoosingCategory) {
             NavigationStack {
@@ -157,43 +148,135 @@ struct InboxTray: View {
                                    showsCancel: true, outcome: $adoption)
             }
         }
+        // The New chip. The new category becomes the draft's, and the row scrolls to it.
+        .sheet(item: $newCategory) { request in
+            CategoryEditorSheet(mode: request.mode, catalog: catalog) { draft.category = $0.slug }
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        .task { if DemoScenario.wantsComposerNew { newCategory = CategoryEditorRequest(mode: .add) } }
+        #endif
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
-    /// Category chips in the owner's order (UI spec 1.4), or one chip that opens the whole list
-    /// when there are too many to scan or the text is very large.
+    /// Where the row last scrolled to. The key changes when the selection or the number of chips
+    /// does, so a category created from `New` is scrolled into view once it exists.
+    private struct ScrollKey: Hashable {
+        var category: String
+        var count: Int
+    }
+
+    private static let newChipID = "new-category"
+
+    /// Duration chips and category chips (UI spec 1.4). Expanded: one horizontal row that scrolls
+    /// to the selected or new chip. Collapsed (more than eight, or an accessibility size): the
+    /// duration row, then the category chip on a line of its own so its chevron is never clipped.
     @ViewBuilder
-    private var categoryChips: some View {
+    private var durationAndCategoryRows: some View {
         let layout = CategoryChoiceLayout(catalog: catalog, current: draft.category)
         if ComposerCategoryRow.isCollapsed(unarchivedCount: layout.rows.count,
                                            isAccessibilitySize: typeSize.isAccessibilitySize) {
-            let current = catalog.resolve(draft.category)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) { durationChips }
+                    .padding(.horizontal, 1)
+            }
+            collapsedCategoryLine(layout)
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        durationChips
+                        Divider().frame(height: 18).padding(.horizontal, 2)
+                        // One labelled group, so VoiceOver announces "Category" once and each chip
+                        // is read as an option inside it.
+                        HStack(spacing: 6) {
+                            ForEach(layout.chipOrder, id: \.slug) { category in
+                                categoryChip(category, selected: category.slug == layout.selectedSlug)
+                                    .id(category.slug ?? "")
+                            }
+                            newChip.id(Self.newChipID)
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Category")
+                    }
+                    .padding(.horizontal, 1)
+                }
+                .task(id: ScrollKey(category: draft.category, count: layout.chipOrder.count)) {
+                    // Nil anchor: the least scrolling that brings the chip into view, so the
+                    // duration chips stay visible when the selected chip is already on screen.
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
+                        // The last chip is selected (a category just created, say): bring the New chip
+                        // into view with it, so the end of the row is never half cut off.
+                        if let last = layout.chipOrder.last, last.slug == layout.selectedSlug {
+                            proxy.scrollTo(Self.newChipID, anchor: .trailing)
+                        } else {
+                            proxy.scrollTo(layout.selectedSlug ?? CategoryCatalog.fallbackSlug)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var durationChips: some View {
+        ForEach(draft.durations, id: \.self) { minutes in
+            chip(label: durationLabel(minutes),
+                 selected: draft.minutes == minutes) { draft.select(minutes: minutes) }
+        }
+    }
+
+    /// The collapsed chip on its own line, fully visible: it is not inside the horizontal scroll
+    /// view, which clipped its trailing chevron.
+    private func collapsedCategoryLine(_ layout: CategoryChoiceLayout) -> some View {
+        let current = catalog.resolve(draft.category)
+        let stacked = typeSize.isAccessibilitySize
+        let wrap = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+                           : AnyLayout(HStackLayout(spacing: 6))
+        return wrap {
             Button { isChoosingCategory = true } label: {
                 HStack(spacing: 4) {
                     CategoryGlyph(style: CategoryStyle(current), size: .caption)
-                    Text(current.name).lineLimit(1).truncationMode(.tail)
+                    Text(current.name)
+                        .lineLimit(stacked ? 3 : 1)
+                        .truncationMode(.tail)
+                        .multilineTextAlignment(.leading)
                     Image(systemName: "chevron.up.chevron.down").font(.caption2).accessibilityHidden(true)
                 }
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(.primary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.primary.opacity(0.05), in: Capsule())
-                .frame(maxWidth: 180, minHeight: 44)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Category, \(current.name)")
             .accessibilityHint("Opens the list of categories")
-        } else {
-            // TODO(3.8): the trailing `New` chip (spec 1.4) opens the category editor. Hidden
-            // until that editor exists.
-            ForEach(layout.chipOrder, id: \.slug) { category in
-                categoryChip(category, selected: category.slug == layout.selectedSlug)
-            }
+            newChip
+            if !stacked { Spacer(minLength: 0) }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// `New` opens the category editor (spec 1.4).
+    private var newChip: some View {
+        Button { newCategory = CategoryEditorRequest(mode: .add) } label: {
+            Label("New", systemImage: "plus")
+                .labelStyle(.titleAndIcon)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Capsule().strokeBorder(Color.accentColor.opacity(0.45), lineWidth: 1))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("New category")
+        .accessibilityHint("Opens the category editor")
     }
 
     /// Today's paint (tint at the existing opacities, now from the category's spine) with the

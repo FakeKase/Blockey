@@ -79,6 +79,38 @@ enum DemoScenario {
         ProcessInfo.processInfo.arguments.contains("-blockeyCategoryList")
     }
 
+    /// `-blockeyCategories` pushes Settings, Categories (add `-blockeySettings` to open Settings
+    /// first). `-blockeyCategoryEditor` opens the Add editor on top of it; `-blockeyEditorName`,
+    /// `-blockeyEditorEmoji` and `-blockeyEditorColor #RRGGBB` pre-fill it, so the Other...
+    /// row and its warning can be screenshotted without driving the system colour picker.
+    /// `-blockeyArchiveSheet <slug>` opens the move-to sheet. `-blockeyComposerNew` opens the
+    /// category editor from the composer's New chip.
+    static var wantsCategories: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyCategories")
+    }
+    static var editorPreset: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("-blockeyCategoryEditor") else { return nil }
+        return "add"
+    }
+    private static func value(after flag: String) -> String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: flag), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+    static var editorName: String? { value(after: "-blockeyEditorName") }
+    static var editorEmoji: String? { value(after: "-blockeyEditorEmoji") }
+    static var editorColor: String? { value(after: "-blockeyEditorColor") }
+    static var archiveSheetSlug: String? { value(after: "-blockeyArchiveSheet") }
+    /// `-blockeyEditorAutoSave` saves the pre-filled Add editor at once, so a screenshot can show
+    /// the composer after a category was created from its New chip.
+    static var wantsEditorAutoSave: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyEditorAutoSave")
+    }
+    static var wantsComposerNew: Bool {
+        ProcessInfo.processInfo.arguments.contains("-blockeyComposerNew")
+    }
+
     /// `-blockeyHoldBanner` stops the banner timer, so a screenshot can catch it.
     static var holdsBanner: Bool {
         ProcessInfo.processInfo.arguments.contains("-blockeyHoldBanner")

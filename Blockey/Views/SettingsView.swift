@@ -5,6 +5,10 @@ struct SettingsView: View {
     @Environment(CalendarService.self) private var calendars
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.categoryCatalog) private var catalog
+    #if DEBUG && targetEnvironment(simulator)
+    @State private var demoPushCategories = false
+    #endif
 
     @State private var exportDocument: BackupFile?
     @State private var isExporting = false
@@ -60,6 +64,21 @@ struct SettingsView: View {
                     Toggle("Skip preview", isOn: $skipPlanPreview)
                 } footer: {
                     Text("Add your template with one tap, without checking the plan first. You can undo it. Days that already have blocks always show the preview.")
+                }
+
+                Section {
+                    NavigationLink {
+                        CategoriesListView()
+                    } label: {
+                        LabeledContent("Categories") {
+                            Text("\(catalog.activeInOrder().count)").foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Categories, \(catalog.activeInOrder().count)")
+                    .accessibilityAddTraits(.isButton)
+                } footer: {
+                    Text("Names, emoji and colours for your blocks. Changing one updates everything that uses it.")
                 }
 
                 Section {
@@ -138,6 +157,10 @@ struct SettingsView: View {
                 }
                 #endif
             }
+            #if DEBUG && targetEnvironment(simulator)
+            .navigationDestination(isPresented: $demoPushCategories) { CategoriesListView() }
+            .task { if DemoScenario.wantsCategories { demoPushCategories = true } }
+            #endif
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

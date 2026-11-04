@@ -178,9 +178,11 @@ struct TemplateEditor: View {
     private func addRow() {
         // Start the new row after the last one, so building a day is sequential.
         let start = template.orderedRows.last.map { $0.startMinuteOfDay + $0.durationMinutes } ?? 9 * 60
+        // Nobody chose a category, so not an archived one ("not offered for new work", UI spec 1.2).
         let row = TemplateRow(title: DefaultTitles.newBlock,
                               startMinuteOfDay: min(start, 23 * 60),
-                              durationMinutes: 60)
+                              durationMinutes: 60,
+                              categoryRaw: catalog.defaultSlugForNewWork)
         row.template = template
         context.insert(row)
     }

@@ -134,9 +134,9 @@ struct CategoryCatalog: Sendable {
         return standIn(for: slug)
     }
 
-    /// Unarchived categories in picker order, plus `current` when it is archived or unknown, so
-    /// opening something is never a silent change. A nil `current` shows what nil resolves to.
-    func choices(current: String?) -> [ResolvedCategory] {
+    /// Every known category (built-ins and rows, archived or not) by `sortIndex`, ties by the
+    /// built-ins' own order and then by the order rows were given.
+    private var allInOrder: [ResolvedCategory] {
         var rows: [(sort: Int, order: Int, slug: String)] = []
         for (i, b) in Self.builtIns.enumerated() {
             let sort = overrides[b.slug]?.sortIndex ?? i
@@ -144,11 +144,70 @@ struct CategoryCatalog: Sendable {
         }
         for (i, def) in customs.enumerated() { rows.append((def.sortIndex, Self.builtIns.count + i, def.slug)) }
         rows.sort { ($0.sort, $0.order) < ($1.sort, $1.order) }
+        return rows.map { resolve($0.slug) }
+    }
 
-        var result = rows.map { resolve($0.slug) }.filter { !$0.isArchived }
+    /// Unarchived categories in the owner's order: what Settings lists and what pickers offer.
+    func activeInOrder() -> [ResolvedCategory] { allInOrder.filter { !$0.isArchived } }
+
+    /// Archived categories, in the order they had when archived (they keep their `sortIndex`).
+    func archived() -> [ResolvedCategory] { allInOrder.filter(\.isArchived) }
+
+    /// Unarchived categories in picker order, plus `current` when it is archived or unknown, so
+    /// opening something is never a silent change. A nil `current` shows what nil resolves to.
+    func choices(current: String?) -> [ResolvedCategory] {
+        var result = activeInOrder()
         let shown = resolve(current)
         if !result.contains(where: { $0.slug == shown.slug }) { result.append(shown) }
         return result
+    }
+
+    /// The category a new block or task should start on when nobody chose one: the fallback
+    /// while it is offered, else the first unarchived category (UI spec 1.2: archived means "not
+    /// offered for new work"). If everything is somehow archived the fallback stands, because
+    /// something has to render.
+    var defaultSlugForNewWork: String {
+        let active = activeInOrder()
+        if active.contains(where: { $0.slug == Self.fallbackSlug }) { return Self.fallbackSlug }
+        return active.first?.slug ?? Self.fallbackSlug
+    }
+
+    /// What is stored for this slug as plain data, or for an untouched built-in what it would
+    /// store (its defaults, at its effective position). Nil for a stand-in, which has nothing
+    /// to edit. The editor starts from this.
+    func value(for slug: String) -> CategoryDefinitionValue? {
+        if let def = overrides[slug] { return def }
+        guard let index = Self.builtIns.firstIndex(where: { $0.slug == slug }) else { return nil }
+        return Self.builtInDefault(at: index, sortIndex: index)
+    }
+
+    /// True when a row is stored for this slug, so an edit mutates it instead of inserting.
+    func hasRow(_ slug: String) -> Bool { overrides[slug] != nil }
+
+    /// A built-in's factory name, emoji, symbol and swatch (palette slots 0...5 in order).
+    /// Nil for anything else. "Reset to default" loads this into the draft (Q3).
+    static func builtInDefault(slug: String) -> CategoryDefinitionValue? {
+        guard let index = builtIns.firstIndex(where: { $0.slug == slug }) else { return nil }
+        return builtInDefault(at: index, sortIndex: index)
+    }
+
+    private static func builtInDefault(at index: Int, sortIndex: Int) -> CategoryDefinitionValue {
+        let b = builtIns[index]
+        return CategoryDefinitionValue(slug: b.slug, name: b.name, emoji: b.emoji, symbolName: b.symbolName,
+                                       paletteIndex: index % Swift.max(1, CategoryPalette.count),
+                                       customColorHex: nil, sortIndex: sortIndex, archivedAt: nil)
+    }
+
+    /// The swatch a new category starts on (UI spec 3.4): the first swatch in picker order that
+    /// no unarchived category uses (a custom colour uses none), else the picker position
+    /// `unarchivedCount % 12`, so a full palette still advances.
+    var defaultPaletteIndexForNewCategory: Int {
+        let active = activeInOrder()
+        let used = Set(active.compactMap { r -> Int? in
+            if case .palette(let i) = r.colorChoice { return i }
+            return nil
+        })
+        return CategoryPalette.defaultIndex(avoiding: used, unarchivedCount: active.count)
     }
 
     /// The definition to insert for "Add as category" on a stand-in. Keeps the stand-in's FNV
