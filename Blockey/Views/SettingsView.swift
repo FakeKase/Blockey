@@ -194,13 +194,13 @@ struct SettingsView: View {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            let backup = try decoder.decode(BlockeyBackup.self, from: Data(contentsOf: url))
+            let backup = try BlockeyBackup.decode(Data(contentsOf: url))
             pendingRestore = PendingRestore(
                 backup: backup,
                 existingTasks: (try? context.fetchCount(FetchDescriptor<TaskItem>())) ?? 0,
                 existingTemplates: (try? context.fetchCount(FetchDescriptor<DayTemplate>())) ?? 0)
+        } catch let error as BlockeyBackup.BackupError {
+            backupMessage = error.localizedDescription
         } catch {
             backupMessage = "That file isn’t a Blockey backup."
         }

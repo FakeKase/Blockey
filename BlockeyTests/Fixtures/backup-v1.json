@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "exportedAt": "2026-10-01T09:00:00Z",
+  "tasks": [
+    { "title": "Write report", "estimatedMinutes": 60, "category": "deep", "sortIndex": 0 },
+    { "title": "Ring the bank", "estimatedMinutes": 15, "category": "admin", "sortIndex": 1,
+      "droppedFromTemplate": true, "droppedFromTemplateName": "Workday" }
+  ],
+  "templates": [
+    { "id": "11111111-1111-1111-1111-111111111111", "name": "Workday",
+      "rows": [ { "title": "Focus", "startMinuteOfDay": 540, "durationMinutes": 120, "category": "deep" } ] }
+  ],
+  "assignments": [ { "weekday": 2, "templateID": "11111111-1111-1111-1111-111111111111" } ],
+  "activityDays": [ "2026-09-30", "2026-10-01" ]
+}

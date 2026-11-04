@@ -20,7 +20,7 @@ struct StreakStoreTests {
 
     private func makeContext() throws -> ModelContext {
         let container = try ModelContainer(
-            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self,
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self, CategoryDefinition.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         return ModelContext(container)
     }
@@ -384,13 +384,13 @@ struct StreakStoreTests {
         #expect(backup.version == 1)
     }
 
-    @Test("Capture and restore round trip the days, and version stays 1")
+    @Test("Capture and restore round trip the days, and the version is current")
     func roundTrip() throws {
         let source = try makeRig()
         source.store.record(now: at(10))
         source.store.record(now: calendar.date(byAdding: .day, value: -1, to: at(10)) ?? at(10))
         let backup = try BlockeyBackup.capture(context: source.context)
-        #expect(backup.version == 1)
+        #expect(backup.version == BlockeyBackup.currentVersion)
         #expect(Set(backup.activityDays ?? []) == Set(try rows(source.context).map(\.key)))
 
         let encoder = JSONEncoder()

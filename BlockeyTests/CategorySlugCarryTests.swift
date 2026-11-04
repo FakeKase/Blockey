@@ -13,7 +13,7 @@ struct CategorySlugCarryTests {
     private func makeContext() throws -> ModelContext {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(
-            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self,
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self, CategoryDefinition.self,
             configurations: config)
         return ModelContext(container)
     }

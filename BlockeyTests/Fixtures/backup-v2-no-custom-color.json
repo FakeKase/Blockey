@@ -1,0 +1,48 @@
+{
+  "version": 2,
+  "exportedAt": "2026-11-04T09:00:00Z",
+  "tasks": [
+    {
+      "title": "Water plants",
+      "estimatedMinutes": 20,
+      "category": "งานบ้าน",
+      "sortIndex": 0
+    }
+  ],
+  "templates": [],
+  "assignments": [],
+  "activityDays": [
+    "2026-11-03"
+  ],
+  "categories": [
+    {
+      "slug": "งานบ้าน",
+      "name": "งานบ้าน",
+      "emoji": "🧹",
+      "symbolName": "house",
+      "paletteIndex": 8,
+      "sortIndex": 0
+    },
+    {
+      "slug": "reading",
+      "name": "Reading",
+      "emoji": "📚",
+      "symbolName": "book",
+      "paletteIndex": 9,
+      "sortIndex": 1,
+      "archivedAt": "2026-10-20T00:00:00Z"
+    }
+  ],
+  "settings": {
+    "dayStartMinute": 480,
+    "dayEndMinute": 1260,
+    "snapMinutes": 30,
+    "hiddenCalendarIDs": [
+      "CAL-A",
+      "CAL-B"
+    ],
+    "alarmEnabled": true,
+    "alarmMinutesBefore": 10,
+    "skipPlanPreview": true
+  }
+}

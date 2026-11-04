@@ -9,7 +9,7 @@ struct BackupDroppedTemplateQATests {
 
     private func makeContext() throws -> ModelContext {
         let container = try ModelContainer(
-            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self,
+            for: TaskItem.self, DayTemplate.self, TemplateRow.self, TemplateAssignment.self, ActivityDay.self, CategoryDefinition.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         return ModelContext(container)
     }
