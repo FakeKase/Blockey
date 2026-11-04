@@ -22,6 +22,11 @@ struct SettingsView: View {
 
     @Query private var activityDays: [ActivityDay]
 
+    #if DEBUG
+    @State private var tokenProbe = TokenProbe.load()
+    @State private var tokenProbeReport: String?
+    #endif
+
     private var hiddenIDs: Set<String> {
         Set(hiddenCalendarsRaw.split(separator: "\n").map(String.init))
     }
@@ -126,6 +131,12 @@ struct SettingsView: View {
                 } footer: {
                     Text("Your blocks are already safe in Calendar. Tasks and templates live only on this phone. They survive reinstalling Blockey, but not deleting it.")
                 }
+
+                #if DEBUG
+                if calendars.canRunTokenProbe {
+                    tokenProbeSection
+                }
+                #endif
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -204,6 +215,54 @@ struct SettingsView: View {
             backupMessage = "Could not restore that backup."
         }
     }
+
+    #if DEBUG
+    /// Plan task 0.3: the owner's on-phone check that a Thai category slug survives iCloud.
+    /// Debug builds only, and hidden when the app runs on a Mac (see `canRunTokenProbe`).
+    @ViewBuilder
+    private var tokenProbeSection: some View {
+        Section {
+            if let probe = tokenProbe {
+                Button("Check token test block") {
+                    tokenProbeReport = probe.report(for: calendars.observeTokenProbe(probe))
+                }
+                Button("Delete token test block", role: .destructive) {
+                    do {
+                        let deleted = try calendars.deleteTokenProbe(probe)
+                        TokenProbe.clear()
+                        tokenProbe = nil
+                        tokenProbeReport = deleted
+                            ? "Test block deleted."
+                            : "Test block not found, so nothing was deleted. If a block titled \"\(TokenProbe.title)\" is still in Calendar, delete it there."
+                    } catch {
+                        // Keep the probe so Delete can be tried again.
+                        tokenProbeReport = "Could not delete it: \(error.localizedDescription)"
+                    }
+                }
+            } else {
+                Button("Create token test block") {
+                    do {
+                        let probe = try calendars.createTokenProbe()
+                        probe.save()
+                        tokenProbe = probe
+                        tokenProbeReport = "Created \"\(TokenProbe.title)\" at the next whole hour.\n" + probe.report(for: calendars.observeTokenProbe(probe))
+                    } catch {
+                        tokenProbeReport = "Could not create it: \(error.localizedDescription)"
+                    }
+                }
+            }
+            if let tokenProbeReport {
+                Text(tokenProbeReport)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+            }
+        } header: {
+            Text("Developer")
+        } footer: {
+            Text("Debug builds only. Writes one event to the Blockey calendar to test whether a Thai category survives iCloud sync.")
+        }
+    }
+    #endif
 
     /// Minutes-past-midnight stored as an `Int`, edited as a time of day.
     private func binding(for storage: Binding<Int>) -> Binding<Date> {

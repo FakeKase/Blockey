@@ -603,6 +603,86 @@ final class CalendarService {
         return store.events(matching: predicate).first { BlockToken(url: $0.url)?.id == token.id }
     }
 
+    // MARK: - Token survival probe (debug builds, any iPhone)
+
+    #if DEBUG
+    /// False when this iOS build is running on a Mac, where EventKit is the Mac's own Calendar.
+    /// The probe is the one piece of debug EventKit code that is not simulator-only, because its
+    /// whole point is the phone's iCloud calendar (plan task 0.3). This check is what keeps it off
+    /// the Mac. On the simulator it writes to the simulator's calendar, which is harmless.
+    var canRunTokenProbe: Bool {
+        !ProcessInfo.processInfo.isiOSAppOnMac && !ProcessInfo.processInfo.isMacCatalystApp
+    }
+
+    /// Writes the probe block at the next whole hour, 30 minutes long, in the Blockey calendar.
+    func createTokenProbe(now: Date = .now, calendar: Calendar = .current) throws -> TokenProbe {
+        guard canRunTokenProbe else { throw Failure.notPermitted }
+        let start = calendar.nextDate(after: now, matching: DateComponents(minute: 0, second: 0),
+                                      matchingPolicy: .nextTime) ?? now
+        var probe = TokenProbe(tokenID: UUID(), sourceTaskID: UUID(), expectedURL: "",
+                               eventIdentifier: nil, createdAt: now)
+        let block = try createBlock(title: TokenProbe.title,
+                                    range: TimeRange(start: start, duration: 30 * 60),
+                                    token: probe.token, notes: nil, alarmOffsets: [])
+        // Read back what EventKit actually stored rather than what we meant to write, so the
+        // baseline is the post-save url and a later difference is the sync's doing.
+        let saved = block.eventIdentifier.flatMap { store.event(withIdentifier: $0) }
+        probe.expectedURL = saved?.url?.absoluteString ?? probe.token.url?.absoluteString ?? ""
+        probe.eventIdentifier = block.eventIdentifier
+        return probe
+    }
+
+    /// Looks for the probe by token first, then by EventKit identifier. The 60-day window is
+    /// wide because the experiment asks the owner to move the block in Calendar.app.
+    func observeTokenProbe(_ probe: TokenProbe) -> TokenProbe.Observation {
+        guard let event = probeEvent(for: probe) else {
+            // Read-only: tells "re-created without its token" apart from "gone".
+            if let ours = blockeyCalendar(), access.isGranted, canRunTokenProbe {
+                let from = probe.createdAt.addingTimeInterval(-60 * 86_400)
+                let to = probe.createdAt.addingTimeInterval(60 * 86_400)
+                let predicate = store.predicateForEvents(withStart: from, end: to, calendars: [ours])
+                if let lookalike = store.events(matching: predicate).first(where: { $0.title == TokenProbe.title }) {
+                    return TokenProbe.Observation(found: .byTitleOnly, rawURL: lookalike.url?.absoluteString,
+                                                  eventIdentifier: lookalike.eventIdentifier,
+                                                  title: lookalike.title, start: lookalike.startDate)
+                }
+            }
+            return TokenProbe.Observation(found: .missing)
+        }
+        let byToken = BlockToken(url: event.url)?.id == probe.tokenID
+        return TokenProbe.Observation(found: byToken ? .byToken : .byIdentifierOnly,
+                                      rawURL: event.url?.absoluteString,
+                                      eventIdentifier: event.eventIdentifier,
+                                      title: event.title,
+                                      start: event.startDate)
+    }
+
+    /// Deletes the probe block. Returns false if it could not be found.
+    func deleteTokenProbe(_ probe: TokenProbe) throws -> Bool {
+        guard let event = probeEvent(for: probe) else { return false }
+        try store.remove(event, span: .thisEvent, commit: true)
+        revision &+= 1
+        return true
+    }
+
+    /// Only ever returns an event in the Blockey calendar. The identifier fallback also requires
+    /// the probe's title, so a stale identifier can't point the Delete button at a real block.
+    private func probeEvent(for probe: TokenProbe) -> EKEvent? {
+        guard access.isGranted, canRunTokenProbe, let ours = blockeyCalendar() else { return nil }
+        let from = probe.createdAt.addingTimeInterval(-60 * 86_400)
+        let to = probe.createdAt.addingTimeInterval(60 * 86_400)
+        let predicate = store.predicateForEvents(withStart: from, end: to, calendars: [ours])
+        if let match = store.events(matching: predicate).first(where: { BlockToken(url: $0.url)?.id == probe.tokenID }) {
+            return match
+        }
+        guard let id = probe.eventIdentifier,
+              let event = store.event(withIdentifier: id),
+              event.calendar?.calendarIdentifier == ours.calendarIdentifier,
+              event.title == TokenProbe.title else { return nil }
+        return event
+    }
+    #endif
+
     // MARK: - Demo data (simulator only)
 
     #if DEBUG
