@@ -82,6 +82,14 @@ final class TaskItem {
         self.droppedFromTemplateName = droppedFromTemplateName
     }
 
+    /// The slug as stored, under its real name. `category` is the lossy enum view; this is
+    /// what to read and write once a category can be user-defined (ADR 005). Same storage, so
+    /// no rename and no migration.
+    var categorySlug: String {
+        get { categoryRaw }
+        set { categoryRaw = newValue }
+    }
+
     var category: BlockCategory {
         get { BlockCategory(rawValue: categoryRaw) ?? .fallback }
         set { categoryRaw = newValue.rawValue }

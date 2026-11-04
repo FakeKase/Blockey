@@ -15,7 +15,8 @@ struct BlockeyApp: App {
             DayTemplate.self,
             TemplateRow.self,
             TemplateAssignment.self,
-            ActivityDay.self
+            ActivityDay.self,
+            CategoryDefinition.self
         ])
     }
 }
